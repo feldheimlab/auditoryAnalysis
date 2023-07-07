@@ -2,19 +2,22 @@
 '''
 Common distributions that are used to fit the data
 '''
-
-
-
-
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy import optimize
+from scipy import stats
+from scipy import special
 
 
 # Uniform distribution
 def uniform(height):
     return lambda x: height*(x/x)
 
+
 def uniformParams(data, X):
     height = np.mean(data)
     return height
+
 
 def fitUniform(data, X):
     '''
@@ -26,9 +29,11 @@ def fitUniform(data, X):
     
     return p
 
+
 #Gaussian distribution
 def gaussian(height, xmean, xsd, base):
     return lambda x: height*np.exp(-(((xmean-x)/xsd)**2))+base
+
 
 def gaussianmoments(data):
     '''
@@ -46,6 +51,7 @@ def gaussianmoments(data):
     height = datam.max()
     
     return height, xmean, xsd, base
+
 
 def fitGaussian(data):
     '''
@@ -65,6 +71,7 @@ def vonMises(height, xmean, conc):
     '''
     return lambda x: height*np.exp(conc*np.cos(x-xmean))/(2*np.pi*special.jv(0, conc))
 
+
 def vonmisesmoments(data, X):
     '''
     X in radians
@@ -81,6 +88,7 @@ def vonmisesmoments(data, X):
     height = datam.max()
     
     return height, xmean, conc
+
 
 def fitVonMises(data, X):
     '''
@@ -105,6 +113,7 @@ def rodrot(targetvector, rotationaxis, angle):
      
     return np.squeeze(r1 + r2 + r3)
 
+
 def sphericalUnit(theta, phi):
     # this function gives a unit vectors of spherical coordinates.
     # the notation is based on Arfken
@@ -122,19 +131,20 @@ def sphericalUnit(theta, phi):
     
     return unitvecs
 
+
 def sph2cart(theta, phi):
     # this returns cartesian coord based on the spherical coordinates.
     # this assumes a unit circle
     return [np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)]
+
 
 def kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3, base):
     kent_dist = height * np.exp(-kappa) * np.exp(kappa * np.dot(xyz, gamma1) + 
             beta * kappa * (np.dot(xyz, gamma2)**2 - np.dot(xyz, gamma3)**2)) - base 
     return np.squeeze(kent_dist)
 
-def kentdist(kappa, beta, theta, phi, alpha, height, base, xyz):
-    xyz = xs[:,:3]
 
+def kentdist(kappa, beta, theta, phi, alpha, height, base, xyz):
     alpha = 45
 
     theta_degree = 45 
@@ -142,8 +152,6 @@ def kentdist(kappa, beta, theta, phi, alpha, height, base, xyz):
 
     phi_degree = 45
     phi = (90+phi_degree)*np.pi/180
-
-    n_samples = xyz.shape[0]
 
     units = sphericalUnit(theta, phi)
     gamma1 = units[:, 0]
@@ -157,6 +165,7 @@ def kentdist(kappa, beta, theta, phi, alpha, height, base, xyz):
 
     return kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3, base)
 
+
 def kentRandStart():
     kappa = np.random.uniform(low=0, high=100, size=1)
     beta = np.random.uniform(low=-0.5, high=0.5, size=1)
@@ -168,7 +177,8 @@ def kentRandStart():
     
     return kappa, beta, theta, phi, alpha, height, base
 
-def fitKent(data, X):
+
+def fitKent(data, xyz):
     '''
     X in radians
     Returns (height, xmean, conc)
@@ -178,6 +188,7 @@ def fitKent(data, X):
     p, success = optimize.leastsq(error_function, params)
     
     return p
+
 
 def azimElevCoord(azim, elev, data):
     corz = np.cos(elev)
@@ -194,6 +205,7 @@ def azimElevCoord(azim, elev, data):
             xs[n,3] = data[k,i]
             n+=1
     return xs
+
 
 def grid3d(gridsize = 200):
 
@@ -217,7 +229,6 @@ def grid3d(gridsize = 200):
         colors[i, j] = (1.0, 1.0, 1.0, 1.0)
         
     return x, y, z, points, colors
-
 
 
 def chiSquaredTest(data, modelfit, plot=True):
