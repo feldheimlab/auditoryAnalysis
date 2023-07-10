@@ -4,16 +4,17 @@ from scipy import optimize
 from scipy import stats
 from scipy import special
 
-def chiSquaredTest(data, modelfit, plot=True):
+def chiSquaredTest(data, modelfit, params, plot=True, savepath=None):
     
     normdata = np.sum(data)*modelfit/np.sum(modelfit)
     
     chiresults = stats.chisquare(data, normdata)
-    
+    df = data.size-len(params)
     print(chiresults)
+    print('Chi squared per degrees freedom: ', chiresults.statistic/df)
     if plot:
         try:
-            chibins = np.arange(0,int(chiresults.statistic*2),0.1)
+            chibins = np.arange(0,df*3,0.1)
         except:
             chibins = np.arange(0,100,0.1)
             
@@ -22,7 +23,7 @@ def chiSquaredTest(data, modelfit, plot=True):
         axs[0].set_ylabel('probability')
         axs[0].set_xlabel('Chi2 statistic')
 
-        axs[0].plot(chibins, stats.chi2.pdf(chibins, df=len(data)-1))
+        axs[0].plot(chibins, stats.chi2.pdf(chibins, df=df))
         axs[0].vlines(chiresults.statistic,0,0.05, 'r')
         axs[0].text(chiresults.statistic,0.05, 'p-value: {}'.format(np.round(chiresults.pvalue,2)))
         axs[1].scatter(data,  modelfit, c='k')
@@ -36,6 +37,9 @@ def chiSquaredTest(data, modelfit, plot=True):
         axs[1].set_ylabel('fit values')
         axs[1].set_xlabel('actual values')
         plt.tight_layout()
+        if savepath is not None:
+            print('saving to :', savepath)
+            plt.savefig(savepath, dpi=300)
         plt.show()
 
 # uniform distribution
@@ -246,25 +250,25 @@ def sph2cart(theta, phi):
     # this assumes a unit circle
     return [np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)]
 
-def kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3):
+def kent(xyz, 
+         height, 
+         beta, kappa, gamma1, gamma2, gamma3):
 #, base):
     kent_dist = height * np.exp(-kappa) * np.exp(kappa * np.dot(xyz, gamma1) + 
             beta * kappa * (np.dot(xyz, gamma2)**2 - np.dot(xyz, gamma3)**2)) 
 #- base 
     return np.squeeze(kent_dist)
 
-def kentdist(kappa, beta, theta, phi, alpha, height, base, xyz):
+def kentdist(kappa, beta, theta, phi, alpha, height, 
+             #base, 
+             xyz):
 
     units = sphericalUnit(theta, phi)
     gamma1 = units[:, 0]
 
     gamma2 = rodrot(units[:, 1], units[:, 0], alpha)
     gamma3 = rodrot(units[:, 2], units[:, 0], alpha)
-
-    gamma1 = np.transpose(gamma1[None,None,:], [1, 2, 0])
-    gamma2 = np.transpose(gamma2[None,None,:], [1, 2, 0])
-    gamma3 = np.transpose(gamma3[None,None,:], [1, 2, 0])
-
+    
     return kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3)
     #, base)
 
@@ -277,19 +281,11 @@ def kentRandStart():
     height = np.random.uniform(low=0, high=100, size=1)
     # base = np.random.uniform(low=0, high=100, size=1)
     
-    return kappa, beta, theta, phi, alpha, height
+    params = np.array([kappa, beta, theta, phi, alpha, height])
 #, base
-
-def fitKent(data, xyz):
-    '''
-    X in radians
-    Returns (height, xmean, conc)
-    '''
-    params = kentRandStart()
-    error_function = lambda p: np.ravel(kentdist(*p, xyz) - data)
-    p, success = optimize.leastsq(error_function, params)
-    
-    return p    
+   
+    return np.squeeze(params)
+#, base
 
 def azimElevCoord(azim, elev, data):
     corz = np.cos(elev)
@@ -297,14 +293,15 @@ def azimElevCoord(azim, elev, data):
     n=0
     
     for k in np.arange(corz.shape[0]):
-        corx = np.sin(elev[k])*np.sin(azim)
-        cory = np.sin(elev[k])*np.cos(azim)
+        cory = np.sin(elev[k])*np.sin(azim)
+        corx = np.sin(elev[k])*np.cos(azim)
         for i in np.arange(corx.shape[0]):
             xs[n,0] = corx[i]
             xs[n,1] = cory[i]
             xs[n,2] = corz[k]
             xs[n,3] = data[k,i]
             n+=1
+            
     return xs
 
 def grid3d(gridsize = 200):
@@ -330,6 +327,43 @@ def grid3d(gridsize = 200):
         
     return x, y, z#, points, colors
 
+def fitKent(data, xyz):
+    '''
+    X in radians
+    Returns (height, xmean, conc)
+    '''    
+              #kappa, beta, theta, phi, alpha, height
+    limits = ((0  , -0.5, -np.pi/4, -np.pi, -2*np.pi, 0),
+              (100,  0.5,  3*np.pi/2,  np.pi,  2*np.pi, 100))
+    
+    params = kentRandStart()
+    error_function = lambda p: np.ravel(kentdist(*p, xyz) - data)
+    results = optimize.least_squares(error_function, params, bounds=limits)
+    
+    if results.success:
+        try:
+            p = results.x
+            jacobian = results.jac
+            cov = np.linalg.inv(jacobian.T.dot(jacobian))
+#             cov = jacobian.T.dot(jacobian)
+            var = np.sqrt(np.diagonal(cov))
+            fun = results.fun
+        except Exception as e:
+            print(e)
+            p = results.x * np.nan
+            var = p
+            fun = np.nan
+    else:
+        print(results.message)
+        p = results.x * np.nan
+        var = p
+        fun = np.nan
+    
+    return p, var, fun
+
+def aic_leastsquare(residuals, params):
+    if not np.isnan(residuals).any():
+        return residuals.size * np.log(np.std(residuals)) + 2*len(params)
 
 
 '''
