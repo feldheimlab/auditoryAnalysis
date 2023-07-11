@@ -1,5 +1,16 @@
+#!/usr/bin/env python3
+
+'''
+Tools for fitting datat to common distributions.
+
+Author: Brian Mullen
+Date: June 2023
+
+'''
+
 import matplotlib.pyplot as plt
 import numpy as np
+
 from scipy import optimize
 from scipy import stats
 from scipy import special
@@ -186,6 +197,7 @@ def fitVonMises(data, X):
     
     return p
 
+
 '''
 # Example code on usage: 
 
@@ -227,6 +239,7 @@ def rodrot(targetvector, rotationaxis, angle):
     r3 = rotationaxis * (np.transpose(rotationaxis) * targetvector) * (1 - np.cos(angle))
      
     return np.squeeze(r1 + r2 + r3)
+
 
 def sphericalUnit(theta, phi):
     # this function gives a unit vectors of spherical coordinates.
@@ -301,7 +314,7 @@ def azimElevCoord(azim, elev, data):
             xs[n,2] = corz[k]
             xs[n,3] = data[k,i]
             n+=1
-            
+
     return xs
 
 def grid3d(gridsize = 200):
@@ -361,6 +374,7 @@ def fitKent(data, xyz):
     
     return p, var, fun
 
+
 def aic_leastsquare(residuals, params):
     if not np.isnan(residuals).any():
         return residuals.size * np.log(np.std(residuals)) + 2*len(params)
@@ -379,66 +393,82 @@ elev = 90-np.array([0,40])
 azim = azim*np.pi/180
 elev = elev*np.pi/180
 
-x, y, z = grid3d(gridsize = 200)
-
 xs = azimElevCoord(azim, elev, data)
-
-f = plt.figure()
-
-ax = f.add_subplot(111, projection='3d')
-xx, yy, zz, colors = list(zip(*xs))  # plot only a portion of these values
-ax.scatter(1.05 * np.array(xx), 1.05 *
-           np.array(yy), 1.05 * np.array(zz), c=colors, cmap='Reds', vmin=0, vmax=20)
-ax.plot_surface(x, y, z, rstride=4, cstride=4,
-                color='lightgray',
-#             facecolors=colors, 
-            linewidth=0)
-ax.set_xlabel(r"$Q\rightarrow$")
-ax.set_ylabel(r"$U\rightarrow$")
-ax.set_zlabel('elevation')
-# ax.set_zlim(0,1)
-ax.view_init(0,90)
-# plt.savefig(savedir + 'binned_fr_data_sphere.svg', dpi=300)
-plt.show()
-
-
-interp = np.arange(azimrad[0],azimrad[-1],.1)
-
 xyz = xs[:,:3]
 
-#data
-p = fitKent(data.reshape(data.size), azimrad)
-param_labels = ['kappa', 'beta', 'theta', 'phi', 'alpha', 'height', 'base']
+interp = np.arange(azim[0],azim[-1],.1)
+#fit the data niter times (random starts)
+niter = 50
+
+for n in np.arange(niter):
+    p, var, residual = fitKent(xs[:,3], xyz)
+    fitdist = kentdist(*p, xyz)
+    if n == 0:
+        param_store = np.zeros((niter, len(p)))
+        resid_store = np.zeros(niter)
+        var_store = np.zeros((niter, len(p)))
+        fun_store = np.zeros(niter)
+    resid_store[n] = np.sum(np.abs(residual))
+    param_store[n] = p
+    var_store[n] = var    
+    fun_store[n] = aic_leastsquare(residual, p)
+
+index = np.nanargmin(fun_store)
+p = param_store[index]        
+var = var_store[index]
+
+param_labels = ['kappa', 'beta', 'theta', 'phi', 'alpha', 'height']#, 'base']
+fig, axs = plt.subplots(4,2)
 for pa, param in enumerate(param_labels):
-    print(param, p[pa])
+    if param in ['theta', 'phi']:
+        print(param, '{0} +/- {1}'.format(np.round(p[pa]*180/np.pi, 4), np.round(var[pa]*180/np.pi, 4)))
+    else:
+        print(param, p[pa])
+    axs[pa%4][pa//4].hist(param_store[:,pa], bins=niter//2)
+    axs[pa%4][pa//4].vlines(p[pa], 0, 10, 'red')
+    axs[pa%4][pa//4].set_ylabel(param)
+
+up = fitUniform(data.reshape(data.size), np.arange(data.size))
+ufit = uniform(*up, np.arange(data.size))
+
+uaic = aic_leastsquare(ufit.reshape(data.shape)-data, up)
+
+index = np.nanargmin(fun_store)
+
+axs[2][1].scatter(np.arange(niter), fun_store)
+axs[2][1].scatter(index, fun_store[index],c='red')
+axs[2][1].hlines(uaic, 0, 50)
+axs[2][1].set_xlabel('iteration')
+axs[2][1].set_ylabel('residual')
+
+index = np.nanargmin(resid_store)
+
+axs[3][1].scatter(np.arange(niter), resid_store)
+axs[3][1].scatter(index, resid_store[index],c='red')
+axs[3][1].set_xlabel('iteration')
+axs[3][1].set_ylabel('residual')
+plt.tight_layout()
+plt.show()
 
 #graph the data
-
 fitdist = kentdist(*p, xyz).reshape(data.shape)
 
 maxval = np.max(data)
 minval=0
+
+print(minval, maxval)
 plt.imshow(data, vmin=minval, vmax=maxval)
+plt.ylim(-0.5,4.5)
+plt.yticks(np.arange(len(elev))[::2], np.round(elev[::2]*180/np.pi))
+plt.xticks(np.arange(len(azim))[::4], np.round(azim[::4]*180/np.pi))
 plt.show()
+
 plt.imshow(fitdist, vmin=minval, vmax=maxval)
+plt.ylim(-0.5,4.5)
+plt.yticks(np.arange(len(elev))[::2], np.round(elev[::2]*180/np.pi))
+plt.xticks(np.arange(len(azim))[::4], np.round(azim[::4]*180/np.pi))
 plt.show()
 
-#data
-p = fitUniform(data.reshape(data.size), np.arange(data.size))
-ufit = uniform(*p, np.arange(data.size))
-
-plt.imshow(data, vmin=minval, vmax=maxval)
-plt.show()
-plt.imshow(ufit.reshape(data.shape), vmin=minval, vmax=maxval)
-plt.show()
-
-#print the fit parameters
-param_labels = ['height']
-for i, label in enumerate(param_labels):
-    print(label, ':', np.round(p[i], 4))
-
-kentres = chiSquaredTest(data.reshape(data.size), fitdist.reshape(fitdist.size))
-
-unires = chiSquaredTest(data.reshape(data.size), ufit)
+kentres = chiSquaredTest(data.reshape(data.size), fitdist.reshape(fitdist.size), p)
 
 '''
