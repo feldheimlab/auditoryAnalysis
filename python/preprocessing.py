@@ -10,11 +10,18 @@ import os
 import sys
 
 import numpy as np
-
+import pandas as pd
 import matplotlib.pyplot as plt
 
+import scipy.io as sio
+
+
+from scipy.stats import poisson
+from scipy.stats import norm
+from scipy.stats import nbinom
+
 def probeMap(probe='AN'):
-    AN = True
+
     probe_map = np.array([[975,0],[875,0],[775,0],[675,0],[575,0],[475,0],[375,0],
                     [275,0],[175,0],[75,0],[0,0],[50,16],[100,20],[150,20],[200,20],
                     [250,20],[300,20],[1050,20],[1000,20],[950,20],[900,20],[850,20],
@@ -53,11 +60,28 @@ def probeMap(probe='AN'):
                     [325,600],[425,600],[525,600],[625,600],[725,600],[825,600],[925,600],
                     [1025,600]])
 
-    if probe=='AN':
+    if probe=='A':
         for i in range(4):
             probe_map[64*(i):(64*(i+1)),1]+=(i*200)
             
     return probe_map
+
+
+def ttl_rise(digital_data, rate=20000):
+    digital_data = np.squeeze(digital_data)
+    dif = digital_data[:-1]-digital_data[1:]
+    rise = np.where(dif<-0.5)[0]
+    rise_d = []
+    #there
+    for r, ris in enumerate(rise):
+        if r == 0:
+            rise_d.append(ris)
+        #if the ttl happens within 9.5ms of last ttl, exclude the ttl
+        elif (ris) >= (rise_d[-1]+(.0095*rate)): 
+            rise_d.append(ris)
+            
+    return np.array(rise_d)*1000/rate#per ms
+
 
 
 def readStimFile(wd, file):   
@@ -71,15 +95,22 @@ def readStimFile(wd, file):
     #get the different stimulations
     
     num_stim1 = lines[2] #stimulation list 1
-    num_stim = lines[3] #stimulation list 2
-    num_stim1 = num_stim1.split(' ')
-    num_stim = num_stim.split(' ')
-    if not num_stim1==['']: # if its not empty
-        num_stim = [num_stim1, num_stim]
+    num_stim2 = lines[3] #stimulation list 2
+    num_stim3 = lines[4] #stimulation list 3
     
-    n0 = 0
+    num_stim1 = num_stim1.split(' ')
+    num_stim2 = num_stim2.split(' ')
+    num_stim3 = num_stim3.split(' ')
+    
+    if not num_stim2==['']: # if its not empty
+        num_stim = [num_stim1, num_stim2]
+    
+    if not num_stim3==['']: # if its not empty
+        num_stim.append(num_stim3)
+#     print(num_stim.shape)
+
     #get the order of stimulations
-    for l, line in enumerate(lines[4:]):
+    for l, line in enumerate(lines[5:]):
         if l == 0:
             first = []
             n0 = 0
@@ -102,7 +133,7 @@ def readStimFile(wd, file):
                         i+=1
                     except Exception as e: e
                     n0=n      
-            stims[l, i] = int(line[n0:])
+            stims[l,i] = int(line[n0:])
 
     stim_ind = np.unique(stims)
 
@@ -116,11 +147,11 @@ def readStimFile(wd, file):
     return stims, num_stim, stim_ind
 
 
-def PatternToCount(pattern, timerange, timeBinSz = 10, vis=True, verbose=False):
-    # make 3D matrix of firing rates based on the events
+def PatternToCount(pattern, timerange, timeBinSz = 10, verbose=False):
+    # make 4D matrix of firing rates based on the events
     # visualize the firing rate based on the data given
     if timerange is None:
-        maxtime = 1000
+        maxtime = 2000
         mintime = 0
     elif not isinstance(timerange, list):
         mintime = 0
@@ -131,28 +162,54 @@ def PatternToCount(pattern, timerange, timeBinSz = 10, vis=True, verbose=False):
     elif len(timerange)==2:
         mintime = timerange[0]
         maxtime = timerange[1]
+    
         
     dur = maxtime - mintime
     
     bins = np.arange(mintime, maxtime+timeBinSz, timeBinSz)
-    try:
-        ns = (len(pattern[0]), len(pattern[0][0]), len(pattern[0][0][0]), len(pattern[0][0][0][0]))
-    except:
-        ns = (len(pattern[0]), len(pattern[0][0]), 1, len(pattern[0][0][0][0]))
-
-    assert len(ns)==4, 'Give only patterns of shape (n neurons, nx, nrep) or (n neurons, nx, ny, nrep)'
-
-    fr = np.zeros((ns[0], ns[1], ns[2], ns[3], int(bins.shape[0]-1)))
-    for n in np.arange(ns[0]):
-        for x in np.arange(ns[1]):
-            for y in np.arange(ns[2]):
-                for t in np.arange(ns[3]):
-                    try:
-                        xs = np.squeeze(pattern[0][n][x][y][t])
-                        fr[n,x,y,t], _ = np.histogram(xs, bins=bins)
-                    except:
-                        fr[n,x,y,t] = np.zeros(int(bins.shape[0]-1))
     
+    ns = pattern.shape
+
+#     assert len(ns)<5, 'Give only patterns of shape (n neurons, nx, nrep) or (n neurons, nx, ny, nrep)'
+    
+    if len(ns) == 5:
+        fr = np.zeros((ns[0], ns[1], ns[2], ns[3], ns[4], int(bins.shape[0]-1)))
+        for n in np.arange(ns[0]):
+            for x in np.arange(ns[1]):
+                for y in np.arange(ns[2]):
+                    for l in np.arange(ns[3]):
+                        for t in np.arange(ns[4]):
+                            try:
+                                xs = np.squeeze(pattern[n,x,y,l,t])
+                                fr[n,x,y,l,t], _ = np.histogram(xs, bins=bins)
+                            except:
+                                fr[n,x,y,l,t] = np.zeros(int(bins.shape[0]-1))
+    
+    elif len(ns) ==4:
+        fr = np.zeros((ns[0], ns[1], ns[2], ns[3], int(bins.shape[0]-1)))
+        for n in np.arange(ns[0]):
+            for x in np.arange(ns[1]):
+                for y in np.arange(ns[2]):
+                    for t in np.arange(ns[3]):
+                        try:
+                            xs = np.squeeze(pattern[n,x,y,t])
+                            fr[n,x,y,t], _ = np.histogram(xs, bins=bins)
+                        except:
+                            fr[n,x,y,t] = np.zeros(int(bins.shape[0]-1))
+    
+    elif len(ns) ==3:
+        fr = np.zeros((ns[0], ns[1], ns[2], int(bins.shape[0]-1)))
+        for n in np.arange(ns[0]):
+            for x in np.arange(ns[1]):
+                for t in np.arange(ns[2]):
+                    try:
+                        xs = np.squeeze(pattern[n,x,y,t])
+                        fr[n,x,t], _ = np.histogram(xs, bins=bins)
+                    except:
+                        fr[n,x,t] = np.zeros(int(bins.shape[0]-1))
+                        
+    else:
+        assert 'Unknown pattern shape'
     return fr
 
 
@@ -251,9 +308,70 @@ def PatternRaster3d(pattern3d, timerange=None):
         plt.show()
 
 
+def PatternRaster(pattern3d, timerange=None, savepath=None):
+    # make/visualize a raster plot based on the data given
+    if savepath != None:
+        dirname = os.path.dirname(savepath)
+        assert os.path.isdir(dirname), 'Directory not found: {}'.format(dirname)
+        save = True
+    else:
+        save = False
+        
+    ns = pattern3d.shape
+    assert len(ns)==3, 'Give only 3d pattern (ny, nx, nrep)'
+    #or assume the first three dimensions after squeeze?
+    
+    if timerange is None:
+        maxtime = 1000
+        mintime = 0
+    elif not isinstance(timerange, list):
+        mintime = 0
+        maxtime = timerange
+    elif len(timerange) == 1:
+        mintime = 0
+        maxtime = timerange[0]
+    elif len(timerange)==2:
+        mintime = timerange[0]
+        maxtime = timerange[1]
+        
+    dur = maxtime - mintime
+    pattern3d = np.squeeze(pattern3d)
+    
+    fig, axs = plt.subplots(ns[0], ns[1], figsize=(10,5))
+    
+    for x in np.arange(ns[0]):
+        xpos = ns[0]-x-1
+        for y in np.arange(ns[1]):
+            for t in np.arange(ns[2]):
+                try:
+                    xs = np.squeeze(pattern3d[x,y,t])
+                    try:
+                        ys = np.ones(xs.shape)*t
+                    except:
+                        ys = np.ones(xs.shape[0])*t
+                except Exception as e:
+                    print(e)
+                    xs = np.nan
+                    ys = np.nan
+                if np.isnan(xs).any(): continue
+                axs[xpos][y].scatter(xs, ys, s=10/ns[2], c='k')
+                xs = np.nan
+            axs[xpos][y].set_yticks([])
+            axs[xpos][y].set_xticks([])
+            axs[xpos][y].set_xlim([mintime, maxtime])
+            axs[xpos][y].set_ylim([-1, ns[2]+1])
+    axs[x][0].set_yticks([0, ns[2]])
+    axs[x][0].set_xticks([mintime, maxtime])
+    axs[x][0].set_xticklabels([0, dur])
+    plt.subplots_adjust(wspace=0, hspace=0)
+    if save:
+        plt.savefig(savepath, dpi=300)
+    plt.show()
+
+
 def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     if window == 0:
-        window=[0,1000]
+        window=[0,2000]
     
     stim_indices = np.unique(stims)
     
@@ -263,15 +381,15 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     n_neurons = asdf.shape[0]
     n_ttls = ttls.shape[0]
     print('Nuerons:', n_neurons)
-    
     if n_stim != len(num_stim):
         sz = []
         for stim in num_stim:
             sz.append(len(stim))
-        twod = True
+        n_diff_stim = len(num_stim)
     else:
-        twod = False
-    
+        n_diff_stim = 1
+        sz = 1
+
     print('TTLs found: ', n_ttls, '\nPresentations in stimfile: ', n_trial*n_stim)
     if n_ttls != n_trial*n_stim:
         print('\nNumber of stimulations do not match the number of ttls captured')
@@ -285,6 +403,7 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     stim = 0
     trial = 0
     i =0
+    
     for t, ttl in enumerate(ttls):
         if force:
             if ((ttl-lastttl) > 1500):#THIS IS ASSUMING LAGER THAN 1.5sec WILL BE APPROXIMATED! (ONLY WHEN FORCED)
@@ -299,8 +418,8 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
                     stim = (stim+1) % n_stim
                     if stim == 0:
                         trial = (trial+1) % n_trial
-                        
-                assert ((ttl-lastttl) < 3500), 'Too complicated a fix' 
+
+                assert ((ttl-lastttl) < 3500), 'Too complicated a fix: {0} - {1} = {2}'.format(ttl, lastttl, ttl-lastttl) 
                         
                 ttlarray[trial, stim] = ttl
             else:
@@ -315,44 +434,191 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     if force:
         print('\tUpdated TTLs: ', np.sum(ttlarray!=0))
     
-    pattern = [[],]
-    if twod:
-        for n in np.arange(n_neurons):
-            pattern[0].append([])
-            for e in np.arange(sz[0]):
-                pattern[0][n].append([])
-                for a in np.arange(sz[1]):
-                    pattern[0][n][e].append([])
-                    for t in np.arange(n_trial):
-                        pattern[0][n][e][a].append([])
+    print('\n')
+    if n_diff_stim==3:
+        pattern = np.empty((n_neurons,sz[0],sz[1],sz[2],n_trial), dtype=object)
         
-        for n, neuron in enumerate(asdf):
-            neur = (neuron[0])
+        for n in np.arange(n_neurons):
+            if (n % 100)==0:
+                print('Working on neuron ', n)
+            neuron = asdf[n]
+            if np.isnan(neuron[0]):
+                pattern[n] = np.nan
+            else:
+                for stim in stim_indices:
+                    currentstim = np.sort(ttlarray[stims == int(stim)])
+                    e, a, l = np.unravel_index(int(stim), sz)
+                    for t, trial in enumerate(currentstim):
+                         pattern[n,e,a,l,t] = neuron[(neuron>=trial+window[0])&(neuron<(trial+window[1]))]-trial
+        
+    if n_diff_stim==2:
+        pattern = np.empty((n_neurons,sz[0], sz[1], 1, n_trial), dtype=object)
+        
+        for n in np.arange(n_neurons):
+            if (n % 100)==0:
+                print('Working on neuron ', n)
+            neuron = asdf[n]
             for stim in stim_indices:
                 currentstim = np.sort(ttlarray[stims == int(stim)])
                 e, a = np.unravel_index(int(stim), sz)
                 for t, trial in enumerate(currentstim):
-                    pattern[0][n][e][a][t].extend(np.sort(neur[(neur>=(trial)+window[0])&(neur<((trial)+window[1]))]-(trial)))
-        print('shape: ', len(pattern[0]), len(pattern[0][0]), len(pattern[0][0][0]), len(pattern[0][0][0][0]), len(pattern[0][0][0][0][0]))
-    
-    else:
+                    pattern[n,e,a,0,t] = neuron[(neuron>=trial+window[0])&(neuron<(trial+window[1]))]-trial
+            
+    if n_diff_stim==1:
+        pattern = np.empty((n_neurons, 1, n_stim, 1, n_trial), dtype=object) 
+        
         for n in np.arange(n_neurons):
-            pattern[0].append([])
-            pattern[0][n].append([])
-            for s in np.arange(n_stim):
-                pattern[0][n][0].append([])
-                for t in np.arange(n_trial):
-                    pattern[0][n][0][s].append([])
-                    
-        for n, neuron in enumerate(asdf):
-            neur = (neuron[0])
+            if (n % 100)==0:
+                print('Working on neuron ', n)
+            neuron = asdf[n]
             for s, stim in enumerate(stim_indices):
                 currentstim = np.sort(ttlarray[stims == int(stim)])
                 for t, trial in enumerate(currentstim):
-                    pattern[0][n][0][s][t].extend(np.sort(neur[(neur>=(trial)+window[0])&(neur<((trial)+window[1]))]-(trial)))
-        print('shape: ', len(pattern[0]), len(pattern[0][0]), len(pattern[0][0][0]), len(pattern[0][0][0][0]))
+                    pattern[n,0,s,0,t] = neuron[(neuron>=trial+window[0])&(neuron<(trial+window[1]))]-trial
+                    
+    print('shape: ', pattern.shape)
     
     return pattern, ttlarray
+
+
+def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.001, minspike=10):
+    
+    if type(test) is str:
+        test = [test]
+    if type(siglvl) is float:
+        siglvls = np.zeros(len(test))*siglvl
+        siglvls = siglvls.tolist()
+    if type(siglvl) is list:
+        siglvls = siglvl
+        
+    assert len(test)==len(siglvls), 'Significance levels and number of testing distributions not equal'
+    
+    sz = pattern.shape
+    nNeu = sz[0]
+    nSeg = sz[1]*sz[2]*sz[3]
+    nWin = windows.shape[0]
+    
+    columns = []
+    
+    if nWin > 1:
+        for w in np.arange(nWin):
+            ave = 'avg window {0} - {1} ms'.format(windows[w,0], windows[w,1])
+            var = 'var window {0} - {1} ms'.format(windows[w,0], windows[w,1])
+            columns.extend([ave, var])
+    else:
+        ave = 'avg window {0} - {1} ms'.format(windows[0,0], windows[0,1])
+        var = 'var window {0} - {1} ms'.format(windows[0,0], windows[0,1])
+        columns.extend([ave, var])
+    
+    spave = 'avg window {0} - {1} ms'.format(spont_win[0], spont_win[1])
+    spvar = 'var window {0} - {1} ms'.format(spont_win[0], spont_win[1])
+    columns.extend([spave, spvar])
+
+    activity_df = pd.DataFrame(columns=columns)
+
+    pvals = np.zeros((nNeu, nWin))
+    spont_fr = np.zeros(nNeu)
+    dur = np.diff(spont_win)[0]
+    spont_fr = PatternToCount(pattern=pattern, timerange=list(spont_win), timeBinSz=dur)*1000/dur
+    ns = spont_fr.shape
+    activity_df[spave] = np.mean(spont_fr, axis=tuple(range(1, spont_fr.ndim)))
+    activity_df[spvar] = np.var(spont_fr, axis=tuple(range(1, spont_fr.ndim)))
+    
+    activ_fr = np.zeros((nNeu, nWin, 2))
+    tested = False
+    for w in np.arange(nWin):
+        window = windows[w]
+        ave = 'avg window {0} - {1} ms'.format(windows[w,0], windows[w,1])
+        var = 'var window {0} - {1} ms'.format(windows[w,0], windows[w,1])
+        dur = np.diff(window)
+    
+        fr = PatternToCount(pattern=pattern,timerange=list(window), timeBinSz=dur)*1000/dur
+        ns = spont_fr.shape
+        activity_df[ave] = np.mean(fr, axis=tuple(range(1, spont_fr.ndim)))
+        activity_df[var] = np.var(fr, axis=tuple(range(1, spont_fr.ndim)))
+        
+        if 'poisson' in test:
+            tested = True
+            ind = test.index('poisson')
+            pval = 'poisson pval compare win {0} - {1}'.format(str(w), nWin)
+            activity_df[pval] = poisson.cdf(activity_df[ave]*dur*nSeg/1000, mu=activity_df[spave]*dur*nSeg/1000)
+                        
+            pospval = 1 - activity_df[pval]
+            
+            possig = pospval <= siglvls[ind] #positive significance
+            negsig = activity_df[pval] <= siglvls[ind] #negative significance
+            
+            fr_limit = activity_df[ave]*dur/1000 >= minspike
+#             possig[fr_limit] = False 
+#             negsig[fr_limit] = False
+            
+            possig[activity_df[var]==0]=False
+            negsig[activity_df[var]==0]=False
+
+            print('Window {0}: Identified significant reposive neurons that {1} increased and {2} decreased firing rates out of {3} with {4} test.'.format(str(w), np.sum(possig), np.sum(negsig),len(possig), 'poisson'))
+            pflag = 'poisson win {0} pos'.format(str(w))
+            nflag = 'poisson win {0} neg'.format(str(w))
+            activity_df[pflag] = possig
+            activity_df[nflag] = negsig
+        
+        if 'quasipoisson' in test:
+            tested = True
+            ind = test.index('quasipoisson')
+            pval = 'quasipoisson pval compare win {0} - {1}'.format(str(w), nWin)
+            
+            segdisper = activity_df[spave]/activity_df[spvar]
+            
+            activity_df[pval] = poisson.cdf(activity_df[ave]*dur*nSeg/1000/segdisper, mu=activity_df[spave]*dur*nSeg/1000/segdisper)
+            
+            pospval = 1 - activity_df[pval]
+            
+            possig = pospval <= siglvls[ind] #positive significance
+            negsig = activity_df[pval] <= siglvls[ind] #negative significance
+            
+            fr_limit = activity_df[ave]*dur/1000 >= minspike
+#             possig[fr_limit] = False 
+#             negsig[fr_limit] = False
+            
+            possig[activity_df[var]==0]=False
+            negsig[activity_df[var]==0]=False
+            print('Window {0}: Identified significant reposive neurons that {1} increased and {2} decreased firing rates out of {3} with {4} test.'.format(str(w), np.sum(possig), np.sum(negsig),len(possig), 'quasipoisson'))
+            pflag = 'quasipoisson win {0} pos'.format(str(w))
+            nflag = 'quasipoisson win {0} neg'.format(str(w))
+            activity_df[pflag] = possig
+            activity_df[nflag] = negsig
+        
+        if 'nbinom' in test:
+            tested = True
+            ind = test.index('nbinom')
+            pval = 'nbinom pval compare win {0} - {1}'.format(str(w), nWin)
+            n = activity_df[spave]**2 * dur*nSeg/1000/(activity_df[spvar]-activity_df[spave])
+            p = activity_df[spave]/activity_df[spvar]
+            activity_df[pval] = nbinom.cdf(activity_df[ave]*dur*nSeg/1000, n, p)
+            
+            pospval = 1 - activity_df[pval]
+            
+            possig = pospval <= siglvls[ind] #positive significance
+            negsig = activity_df[pval] <= siglvls[ind] #negative significance
+            
+            fr_limit = activity_df[ave]*dur/1000 >= minspike
+#             possig[fr_limit] = False 
+#             negsig[fr_limit] = False
+            
+            possig[activity_df[var]==0]=False
+            negsig[activity_df[var]==0]=False
+            print('Window {0}: Identified significant reposive neurons that {1} increased and {2} decreased firing rates out of {3} with {4} test.'.format(str(w), np.sum(possig), np.sum(negsig),len(possig), 'nbinom'))
+            pflag = 'nbinom win {0} pos'.format(str(w))
+            nflag = 'nbinom win {0} neg'.format(str(w))
+            activity_df[pflag] = possig
+            activity_df[nflag] = negsig
+        
+        assert tested, "Testing distribution not specified or unknown testing distribution.\n\
+                           Possible tests: poisson, quasipoisson or nbinom"
+            
+    return activity_df
+
+
+
 
 # if __main__:
 

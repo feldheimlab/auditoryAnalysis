@@ -292,13 +292,10 @@ def kentRandStart():
     phi =  np.random.uniform(low = -144 / 180 * np.pi, high = 144 / 180 * np.pi, size=1)
     alpha = np.random.uniform(low = -2*np.pi, high = 2*np.pi, size=1)
     height = np.random.uniform(low=0, high=100, size=1)
-    # base = np.random.uniform(low=0, high=100, size=1)
     
     params = np.array([kappa, beta, theta, phi, alpha, height])
-#, base
    
     return np.squeeze(params)
-#, base
 
 def azimElevCoord(azim, elev, data):
     corz = np.cos(elev)
@@ -377,7 +374,11 @@ def fitKent(data, xyz):
 
 def aic_leastsquare(residuals, params):
     if not np.isnan(residuals).any():
-        return residuals.size * np.log(np.std(residuals)) + 2*len(params)
+        return residuals.size * np.log(np.var(residuals)) + 2*len(params)
+
+def bic_leastsquare(residuals, params):
+    if not np.isnan(residuals).any():
+        return residuals.size * np.log(np.var(residuals)) + len(params)*np.log(residuals.size)
 
 
 '''
