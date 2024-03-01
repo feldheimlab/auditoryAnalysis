@@ -13,9 +13,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+from zetapy import ifr, zetatest, zetatstest, zetatest2, zetatstest2, plotzeta, plottszeta, plotzeta2, plottszeta2
+
 import scipy.io as sio
-
-
 from scipy.stats import poisson
 from scipy.stats import norm
 from scipy.stats import nbinom
@@ -480,6 +480,48 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     
     return pattern, ttlarray
 
+
+def sigAudFR_zeta_pvalue(asdf, ttls, datasep, seg, stim_dur=10, 
+    boolPlot = False):# Do we want to plot the results?
+    
+    # use minimum of trial-to-trial durations as analysis window size
+    dblUseMaxDur = np.min(np.diff(ttls))
+
+    # 50 random resamplings should give us a good enough idea if this cell is responsive.
+    # If the p-value is close to 0.05, we should increase this number.
+    intResampNum = 50 
+
+    # what size of jittering do we want? (multiple of dblUseMaxDur; default is 2.0)
+    dblJitterSize = 2.0
+
+    # do we want to restrict the peak detection to for example the time during stimulus?
+    # Then put (0, 1) here.
+    tplRestrictRange = (0, np.inf)
+
+    # do we want to compute the instantaneous firing rate? 
+    boolReturnRate = True
+
+    # create a T by 2 array with stimulus onsets and offsets so we can also compute the t-test
+    arrEventTimes = np.transpose(np.array([ttls, ttls+stim_dur]))
+
+    for n, neuron in enumerate(asdf):
+        neur = neuron[(neuron>datasep[seg])&(neuron<datasep[seg+1])]
+        dblZetaP, dZETA, dRate = zetatest(neur, arrEventTimes,
+                                                    dblUseMaxDur=dblUseMaxDur,
+                                                    intResampNum=intResampNum,
+                                                    dblJitterSize=dblJitterSize,
+                                                    boolPlot=boolPlot,
+                                                    tplRestrictRange=tplRestrictRange,
+                                                    boolReturnRate=boolReturnRate)
+        if n == 0:
+            activity_df = pd.DataFrame()
+            vecTime = dRate['vecT']
+            IFR = np.zeros((asdf.shape[0], dRate['vecRates'].shape[0]))
+        IFR[n] = dRate['vecRates']
+        activity.loc[n, 'zeta p'] = dblZetaP
+        activity.loc[n, 't test p'] = dZETA['dblMeanP']
+
+    return activity_df, IFR, vecTime
 
 def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.001, minspike=10):
     
