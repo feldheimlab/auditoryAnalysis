@@ -21,53 +21,67 @@ from scipy.stats import norm
 from scipy.stats import nbinom
 
 
-
-
 def probeMap(probe='AN'):
 
-    probe_map = np.array([[975,0],[875,0],[775,0],[675,0],[575,0],[475,0],[375,0],
-                    [275,0],[175,0],[75,0],[0,0],[50,16],[100,20],[150,20],[200,20],
-                    [250,20],[300,20],[1050,20],[1000,20],[950,20],[900,20],[850,20],
-                    [800,20],[750,20],[700,20],[650,20],[600,20],[550,20],[500,20],
-                    [450,20],[400,20],[350,20],[300,-20],[350,-20],[400,-20],[450,-20],
-                    [500,-20],[550,-20],[600,-20],[650,-20],[700,-20],[750,-20],[800,-20],
-                    [850,-20],[900,-20],[950,-20],[1000,-20],[1050,-20],[250,-20],[200,-20],
-                    [150,-20],[100,-20],[50,-16],[25,0],[125,0],[225,0],[325,0],[425,0],
-                    [525,0],[625,0],[725,0],[825,0],[925,0],[1025,0],[1025,200],[925,200],
-                    [825,200],[725,200],[625,200],[525,200],[425,200],[325,200],[225,200],
-                    [125,200],[25,200],[50,184],[100,180],[150,180],[200,180],[250,180],
-                    [1050,180],[1000,180],[950,180],[900,180],[850,180],[800,180],[750,180],
-                    [700,180],[650,180],[600,180],[550,180],[500,180],[450,180],[400,180],
-                    [350,180],[300,180],[350,220],[400,220],[450,220],[500,220],[550,220],
-                    [600,220],[650,220],[700,220],[750,220],[800,220],[850,220],[900,220],
-                    [950,220],[1000,220],[1050,220],[300,220],[250,220],[200,220],[150,220],
-                    [100,220],[50,216],[0,200],[75,200],[175,200],[275,200],[375,200],
-                    [475,200],[575,200],[675,200],[775,200],[875,200],[975,200],[1025,400],
-                    [925,400],[825,400],[725,400],[625,400],[525,400],[425,400],[325,400],
-                    [225,400],[125,400],[25,400],[50,384],[100,380],[150,380],[200,380],
-                    [250,380],[1050,380],[1000,380],[950,380],[900,380],[850,380],[800,380],
-                    [750,380],[700,380],[650,380],[600,380],[550,380],[500,380],[450,380],
-                    [400,380],[350,380],[300,380],[350,420],[400,420],[450,420],[500,420],
-                    [550,420],[600,420],[650,420],[700,420],[750,420],[800,420],[850,420],
-                    [900,420],[950,420],[1000,420],[1050,420],[300,420],[250,420],[200,420],
-                    [150,420],[100,420],[50,416],[0,400],[75,400],[175,400],[275,400],
-                    [375,400],[475,400],[575,400],[675,400],[775,400],[875,400],[975,400],
-                    [975,600],[875,600],[775,600],[675,600],[575,600],[475,600],[375,600],
-                    [275,600],[175,600],[75,600],[0,600],[50,616],[100,620],[150,620],
-                    [200,620],[250,620],[300,620],[1050,620],[1000,620],[950,620],[900,620],
-                    [850,620],[800,620],[750,620],[700,620],[650,620],[600,620],[550,620],
-                    [500,620],[450,620],[400,620],[350,620],[300,580],[350,580],[400,580],
-                    [450,580],[500,580],[550,580],[600,580],[650,580],[700,580],[750,580],
-                    [800,580],[850,580],[900,580],[950,580],[1000,580],[1050,580],[250,580],
-                    [200,580],[150,580],[100,580],[50,584],[25,600],[125,600],[225,600],
-                    [325,600],[425,600],[525,600],[625,600],[725,600],[825,600],[925,600],
-                    [1025,600]])
+    '''
+    Returns common probe maps
 
-    if probe=='A':
-        for i in range(4):
-            probe_map[64*(i):(64*(i+1)),1]+=(i*200)
+    Masmanadis (UCLA) probes: A are wide-spaced 4 shank probe (64 channels per shank/256 channels per probe; total spacing is 1200um)
+                              AN are narrow-spaced 4 shank probe (64 channels per shank/256 channels per probe; total spacing is 600um)
+
+    Neuropixel 2.0 4 shanke probes: The below map is 4 shanks taken at equal depths.  
+    
+    Arguments:
+        probe: string indicating which probe map to return
+
+    Returns:
+        probeMap: channel locations of each predetermined configuration
+
+    '''
+
+    if (probe=='AN')|(probe=='A'):
+        probe_map = np.array([[975,0],[875,0],[775,0],[675,0],[575,0],[475,0],[375,0],
+                        [275,0],[175,0],[75,0],[0,0],[50,16],[100,20],[150,20],[200,20],
+                        [250,20],[300,20],[1050,20],[1000,20],[950,20],[900,20],[850,20],
+                        [800,20],[750,20],[700,20],[650,20],[600,20],[550,20],[500,20],
+                        [450,20],[400,20],[350,20],[300,-20],[350,-20],[400,-20],[450,-20],
+                        [500,-20],[550,-20],[600,-20],[650,-20],[700,-20],[750,-20],[800,-20],
+                        [850,-20],[900,-20],[950,-20],[1000,-20],[1050,-20],[250,-20],[200,-20],
+                        [150,-20],[100,-20],[50,-16],[25,0],[125,0],[225,0],[325,0],[425,0],
+                        [525,0],[625,0],[725,0],[825,0],[925,0],[1025,0],[1025,200],[925,200],
+                        [825,200],[725,200],[625,200],[525,200],[425,200],[325,200],[225,200],
+                        [125,200],[25,200],[50,184],[100,180],[150,180],[200,180],[250,180],
+                        [1050,180],[1000,180],[950,180],[900,180],[850,180],[800,180],[750,180],
+                        [700,180],[650,180],[600,180],[550,180],[500,180],[450,180],[400,180],
+                        [350,180],[300,180],[350,220],[400,220],[450,220],[500,220],[550,220],
+                        [600,220],[650,220],[700,220],[750,220],[800,220],[850,220],[900,220],
+                        [950,220],[1000,220],[1050,220],[300,220],[250,220],[200,220],[150,220],
+                        [100,220],[50,216],[0,200],[75,200],[175,200],[275,200],[375,200],
+                        [475,200],[575,200],[675,200],[775,200],[875,200],[975,200],[1025,400],
+                        [925,400],[825,400],[725,400],[625,400],[525,400],[425,400],[325,400],
+                        [225,400],[125,400],[25,400],[50,384],[100,380],[150,380],[200,380],
+                        [250,380],[1050,380],[1000,380],[950,380],[900,380],[850,380],[800,380],
+                        [750,380],[700,380],[650,380],[600,380],[550,380],[500,380],[450,380],
+                        [400,380],[350,380],[300,380],[350,420],[400,420],[450,420],[500,420],
+                        [550,420],[600,420],[650,420],[700,420],[750,420],[800,420],[850,420],
+                        [900,420],[950,420],[1000,420],[1050,420],[300,420],[250,420],[200,420],
+                        [150,420],[100,420],[50,416],[0,400],[75,400],[175,400],[275,400],
+                        [375,400],[475,400],[575,400],[675,400],[775,400],[875,400],[975,400],
+                        [975,600],[875,600],[775,600],[675,600],[575,600],[475,600],[375,600],
+                        [275,600],[175,600],[75,600],[0,600],[50,616],[100,620],[150,620],
+                        [200,620],[250,620],[300,620],[1050,620],[1000,620],[950,620],[900,620],
+                        [850,620],[800,620],[750,620],[700,620],[650,620],[600,620],[550,620],
+                        [500,620],[450,620],[400,620],[350,620],[300,580],[350,580],[400,580],
+                        [450,580],[500,580],[550,580],[600,580],[650,580],[700,580],[750,580],
+                        [800,580],[850,580],[900,580],[950,580],[1000,580],[1050,580],[250,580],
+                        [200,580],[150,580],[100,580],[50,584],[25,600],[125,600],[225,600],
+                        [325,600],[425,600],[525,600],[625,600],[725,600],[825,600],[925,600],
+                        [1025,600]])
+        if probe=='A':
+            for i in range(4):
+                probe_map[64*(i):(64*(i+1)),1]+=(i*200)
+
     if probe=='npxl':
-
         npmap = np.array([['NP2014',4,250,70],[0,27,0,1],[0,59,0,1],[0,27,15,1],[0,59,15,1],[0,27,30,1],[0,59,30,1],[0,27,45,1],
                 [0,59,45,1],[0,27,60,1],[0,59,60,1],[0,27,75,1],[0,59,75,1],[0,27,90,1],[0,59,90,1],[0,27,105,1],
                 [0,59,105,1],[0,27,120,1],[0,59,120,1],[0,27,135,1],[0,59,135,1],[0,27,150,1],[0,59,150,1],[0,27,165,1],
@@ -123,6 +137,18 @@ def probeMap(probe='AN'):
 
 
 def ttl_rise(digital_data, rate=20000):
+    '''
+    Returns the rise times of each TTL from the digital waveform
+    
+    Arguments:
+        digital_data: digital waveform from digital channel from recording
+        rate: recording rate of the digital channel
+
+    Returns:
+       ttl array: 1-D array fo the rising times of each ttl found in the digital data
+    '''
+
+
     digital_data = np.squeeze(digital_data)
     dif = digital_data[:-1]-digital_data[1:]
     rise = np.where(dif<-0.5)[0]
@@ -139,7 +165,23 @@ def ttl_rise(digital_data, rate=20000):
 
 
 
-def readStimFile(wd, file):   
+def readStimFile(wd, file):
+    '''
+    Reads the stimulation files formated for this analysis. 
+    This file is generated at the time of generating the sound stimulations.  
+    
+    Arguments:
+        wd: working directory where the file is saved
+        file: the stimulation file, indicating when each stimulation occured
+
+    Returns:
+       stims: 2-D array [order of one set of trials, N-trials]
+       num_stim: list of lists, indicating the number of stimulations for each condition 
+                ie:[[azim stims], [elev stims], [laser stims]]
+       stim_ind: 1-D of the unique indices of each the stimulation
+    '''
+
+
     lines = []
     n = 0
     with open(os.path.join(wd, file)) as f:
@@ -203,6 +245,24 @@ def readStimFile(wd, file):
 
 
 def PatternToCount(pattern, timerange, timeBinSz = 10, verbose=False):
+
+    '''
+    Reads the stimulation files formated for this analysis. 
+    This file is generated at the time of generating the sound stimulations.  
+    
+    Arguments:
+        wd: working directory where the file is saved
+        file: the stimulation file, indicating when each stimulation occured
+
+    Returns:
+       stims: 2-D array [order of one set of trials, N-trials]
+       num_stim: list of lists, indicating the number of stimulations for each condition 
+                ie:[[azim stims], [elev stims], [laser stims]]
+       stim_ind: 1-D of the unique indices of each the stimulation
+    '''
+
+
+
     # make 4D matrix of firing rates based on the events
     # visualize the firing rate based on the data given
     if timerange is None:
@@ -536,9 +596,14 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     return pattern, ttlarray
 
 
-def sigAudFR_zeta_pvalue(asdf, ttls, datasep, seg, stim_dur=10, 
-    boolPlot = False):# Do we want to plot the results?
-    
+def sigAudFR_zeta_pvalue(asdf:np.array, 
+                        ttls:np.array, 
+                        datasep:np.array, 
+                        seg:int, 
+                        stim_dur:int =10, 
+                        boolPlot:bool = False, # Do we want to plot the results?
+                        boolReturnRate:bool = False): # Do we want to return the instantaneous rates?  This increases the computational time emessly
+    print('Calculating Zeta p-values')
     # use minimum of trial-to-trial durations as analysis window size
     dblUseMaxDur = np.min(np.diff(ttls))
 
@@ -553,14 +618,14 @@ def sigAudFR_zeta_pvalue(asdf, ttls, datasep, seg, stim_dur=10,
     # Then put (0, 1) here.
     tplRestrictRange = (0, np.inf)
 
-    # do we want to compute the instantaneous firing rate? 
-    boolReturnRate = True
-
     # create a T by 2 array with stimulus onsets and offsets so we can also compute the t-test
     arrEventTimes = np.transpose(np.array([ttls, ttls+stim_dur]))
-
+    
+    nneur = asdf.shape[0]
     for n, neuron in enumerate(asdf):
+        # if n%100==0:
         neur = neuron[(neuron>datasep[seg])&(neuron<datasep[seg+1])]
+        print('\tWorking on neuron ', n, neur.shape)
         dblZetaP, dZETA, dRate = zetatest(neur, arrEventTimes,
                                                     dblUseMaxDur=dblUseMaxDur,
                                                     intResampNum=intResampNum,
@@ -570,13 +635,18 @@ def sigAudFR_zeta_pvalue(asdf, ttls, datasep, seg, stim_dur=10,
                                                     boolReturnRate=boolReturnRate)
         if n == 0:
             activity_df = pd.DataFrame()
-            vecTime = dRate['vecT']
-            IFR = np.zeros((asdf.shape[0], dRate['vecRates'].shape[0]))
-        IFR[n] = dRate['vecRates']
-        activity.loc[n, 'zeta p'] = dblZetaP
-        activity.loc[n, 't test p'] = dZETA['dblMeanP']
-
-    return activity_df, IFR, vecTime
+            if boolReturnRate:
+                vecTime = np.empty((nneur), dtype='object')
+                IFR = np.empty((nneur), dtype='object')
+        if boolReturnRate:
+            vecTime[n] = dRate['vecT']
+            IFR[n] = dRate['vecRate']
+        activity_df.loc[n, 'zeta p'] = dblZetaP
+        activity_df.loc[n, 't test p'] = dZETA['dblMeanP']
+    if boolReturnRate:
+        return activity_df, IFR, vecTime
+    else:
+        return activity_df, np.nan, np.nan
 
 def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.001, minspike=10):
     
