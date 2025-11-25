@@ -15,7 +15,7 @@ from scipy import optimize
 from scipy import stats
 from scipy import special
 
-def chiSquaredTest(data, modelfit, params, plot=True, savepath=None):
+def chiSquaredTest(data, modelfit, params, plot=False, savepath=None):
     
     normdata = np.sum(data)*modelfit/np.sum(modelfit)
     
