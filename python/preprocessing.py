@@ -556,7 +556,7 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
         for n in np.arange(n_neurons):
             if (n % 100)==0:
                 print('Working on neuron ', n)
-            neuron = asdf[n]
+            neuron = np.squeeze(asdf[n])
             if np.isnan(neuron[0]):
                 pattern[n] = np.nan
             else:
@@ -572,7 +572,7 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
         for n in np.arange(n_neurons):
             if (n % 100)==0:
                 print('Working on neuron ', n)
-            neuron = asdf[n]
+            neuron = np.squeeze(asdf[n])
             for stim in stim_indices:
                 currentstim = np.sort(ttlarray[stims == int(stim)])
                 e, a = np.unravel_index(int(stim), sz)
@@ -585,7 +585,7 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
         for n in np.arange(n_neurons):
             if (n % 100)==0:
                 print('Working on neuron ', n)
-            neuron = asdf[n]
+            neuron = np.squeeze(asdf[n])
             for s, stim in enumerate(stim_indices):
                 currentstim = np.sort(ttlarray[stims == int(stim)])
                 for t, trial in enumerate(currentstim):
