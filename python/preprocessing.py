@@ -164,7 +164,6 @@ def ttl_rise(digital_data, rate=20000):
     return np.array(rise_d)*1000/rate#per ms
 
 
-
 def readStimFile(wd, file):
     '''
     Reads the stimulation files formated for this analysis. 
@@ -648,6 +647,7 @@ def sigAudFR_zeta_pvalue(asdf:np.array,
     else:
         return activity_df, np.nan, np.nan
 
+
 def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.001, minspike=10):
     
     if type(test) is str:
@@ -783,8 +783,6 @@ def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.0
                            Possible tests: poisson, quasipoisson or nbinom"
             
     return activity_df
-
-
 
 
 # if __main__:
