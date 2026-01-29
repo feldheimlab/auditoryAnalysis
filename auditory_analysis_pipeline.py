@@ -2,8 +2,8 @@ import os
 import sys
 import math
 
-sys.path.append('/home/feldheimlab/Documents/auditoryAnalysis/python')
-sys.path.append('/home/feldheimlab/Documents/pyWholeBrain/')
+sys.path.append('./python')
+# sys.path.append('/home/feldheimlab/Documents/pyWholeBrain/')
 
 from scipy.stats import poisson
 from scipy.stats import norm
@@ -11,7 +11,7 @@ import scipy.io as sio
 
 from preprocessing import *
 from distributions_fit import *
-from hdf5manager import hdf5manager as h5
+# from hdf5manager import hdf5manager as h5
 
 from scipy.stats import poisson
 from scipy.stats import nbinom
