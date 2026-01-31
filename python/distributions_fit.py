@@ -10,12 +10,13 @@ Last update: Jan 2026
 
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import namedtuple
 
 from scipy import optimize
 from scipy import stats
 from scipy import special
 
-def chiSquaredTest(data, modelfit, params, plot=False, verbose=True, savepath=None):
+def chiSquaredTest(data, modelfit, params, plot=False, verbose=False, savepath=None):
     
     normdata = np.sum(data)*modelfit/np.sum(modelfit)
     
@@ -56,7 +57,7 @@ def chiSquaredTest(data, modelfit, params, plot=False, verbose=True, savepath=No
 
 
 
-class fit_uniform():
+class uniform_fit():
     def __init__(self, data, X, init_params=None, verbose=False, plot=False):
         '''
         fit uniform distribution of binned data
@@ -70,9 +71,12 @@ class fit_uniform():
         if self.init_params == None:
             self.init_params =  self.uniform_params(self.data, self.X)
 
-        error_function = lambda p: np.ravel(uniform(*p, self.X) - self.data)
+        error_function = lambda p: np.ravel(self.uniform(*p, self.X) - self.data)
         self.params, self.success = optimize.leastsq(error_function, self.init_params)
-        self.chiresults = chiSquaredTest(self.data, uniform(*self.params, bins), self.params, plot=False)
+        self.fitresult = self.uniform(*self.params, self.X)
+        self.residuals  = self.data - self.fitresult
+        self.residuals_sum = np.sum(np.abs(self.residuals))
+        self.chiresults = chiSquaredTest(self.data, self.fitresult, self. params, plot=False)
         
     def uniform(self, height, X):
         return height*np.ones_like(X)
@@ -82,7 +86,7 @@ class fit_uniform():
         return height
     
     def predict(self, x_new):
-        return uniform(*self.params, x_new)
+        return self.uniform(*self.params, x_new)
 
 '''
 # Example code on usage: 
@@ -114,7 +118,7 @@ plt.show()
 
 
 
-class fit_gaussian():
+class gaussian_fit():
     def __init__(self, data, X=None, init_params=None, verbose=False, plot=False):
         '''
         fit normal distribution with a uniform background of binned data
@@ -187,7 +191,7 @@ plt.show()
 
 
 # Vonm Mises 
-class fit_vonMises():
+class vonMises_fit():
     def __init__(self, data, X=None, init_params=None, verbose=True, plot=False):
         '''
         fit vonMises distribution of binned data
@@ -270,6 +274,7 @@ plt.show()
 def azimElevCoord(azim, elev, data):
     corz = np.cos(elev)
     xs = np.zeros([elev.shape[0]*azim.shape[0],4])
+    assert data.size == xs.shape[0], 'Data and x coordinates are not matching'
     n=0
     
     for k in np.arange(corz.shape[0]):
@@ -352,7 +357,7 @@ class kent_fit():
                 try:
                     jacobian = results.jac
                     cov[n] = np.linalg.inv(jacobian.T.dot(jacobian))
-                    var[n] = np.sqrt(np.diagonal(cov))
+                    var[n] = np.diagonal(cov[n])
                 except Exception as e:
                     if self.verbose:
                         print('\t\t', e)
@@ -361,10 +366,12 @@ class kent_fit():
         
         self.iterations = iterations(init_params, cov, var, residuals, params, success, residual_sum)
                         
-        index = np.nanargmin(residual_sum)
-        self.params = params[index]        
-#         self.var = var[index]
-        self.residuals = residuals[index]
+        index = np.nanargmin(self.iterations.residual_sum)
+        print(index)
+        self.params = self.iterations.params[index]        
+        self.var = self.iterations.var[index]
+        self.residuals = self.iterations.residuals[index]
+        self.residual_sum = self.iterations.residual_sum[index]
         
         self.fitdist = self.kent_dist_fit(self.params, self.xyz).reshape(self.datashape)
         self.data = data.reshape(self.datashape)
@@ -391,7 +398,6 @@ class kent_fit():
         # this assumes a unit circle
         return [np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)]
     
-    
     def sphericalUnit(self, theta, phi):
         # this function gives a unit vectors of spherical coordinates.
         # the notation is based on Arfken
@@ -409,25 +415,12 @@ class kent_fit():
     
     def kent_dist_fit(self, params, xyz):
         kappa, beta, theta, phi, alpha, height = params
-        alpha = 45
-
-        theta_degree = 45 
-        theta = theta_degree*np.pi/180
-
-        phi_degree = 45
-        phi = (90+phi_degree)*np.pi/180
-
-        n_samples = xyz.shape[0]
 
         unitvecs = self.sphericalUnit(theta, phi)
         gamma1 = unitvecs[:, 0]
 
         gamma2 = self.rodrot(unitvecs[:, 1], unitvecs[:, 0], alpha)
         gamma3 = self.rodrot(unitvecs[:, 2], unitvecs[:, 0], alpha)
-
-        gamma1 = np.transpose(gamma1[None,None,:], [1, 2, 0])
-        gamma2 = np.transpose(gamma2[None,None,:], [1, 2, 0])
-        gamma3 = np.transpose(gamma3[None,None,:], [1, 2, 0])
 
         return self.kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3)
 
@@ -441,9 +434,11 @@ class kent_fit():
 
         return np.squeeze(np.array([kappa, beta, theta, phi, alpha, height]))
 
+
 def aic_leastsquare(residuals, params):
     if not np.isnan(residuals).any():
         return residuals.size * np.log(np.var(residuals)) + 2*len(params)
+
 
 def bic_leastsquare(residuals, params):
     if not np.isnan(residuals).any():
