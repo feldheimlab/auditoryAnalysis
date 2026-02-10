@@ -56,7 +56,6 @@ def chiSquaredTest(data, modelfit, params, plot=False, verbose=False, savepath=N
         plt.show()
 
 
-
 class uniform_fit():
     def __init__(self, data, X, init_params=None, verbose=False, plot=False):
         '''
@@ -113,11 +112,6 @@ plt.show()
 
 '''
 
-
-
-
-
-
 class gaussian_fit():
     def __init__(self, data, X=None, init_params=None, verbose=False, plot=False):
         '''
@@ -129,16 +123,21 @@ class gaussian_fit():
         self.verbose=verbose
         self.plot=plot
         
-        if self.X == None:
-            self.X = np.indices(self.data.shape)
+        if not isinstance(X, np.ndarray):
+            if not isinstance(X, list):
+                self.X = np.indices(self.data.shape)
         if self.init_params == None:
             self.init_params = self.gaussian_moments()
         print(self.init_params)
-
-        error_function = lambda p: np.ravel(self.gaussian(p, self.X) - data)
+        
+        error_function = lambda p: np.ravel(self.gaussian(p, self.X) - self.data)
         self.params, self.success = optimize.leastsq(error_function, self.init_params)
-        self.chiresults = chiSquaredTest(self.data, self.gaussian(self.params, bins), self.params, plot=self.plot)
-
+        self.fitresult = self.gaussian(self.params, self.X)
+        try:
+            self.chiresults = chiSquaredTest(self.data, self.fitresult, self.params, plot=self.plot)
+        except:
+            self.chiresults = None
+            
     def gaussian_moments(self):
         '''
         Returns (height, x, y, width_x, width_y)
@@ -149,7 +148,7 @@ class gaussian_fit():
         datam[datam<0]=0
         total = datam.sum()
         xmean = (self.X*datam).sum()/total
-        xsd = np.sqrt(np.abs(np.sum((self.X-xmean)**2*data)/np.sum(data)))
+        xsd = np.sqrt(np.abs(np.sum((self.X-xmean)**2*self.data)/np.sum(self.data)))
         height = datam.max()
         return [height, xmean, xsd, base]
 
@@ -354,20 +353,20 @@ class kent_fit():
             
             if success[n]:
                 params[n] = results.x
+                residuals[n] = results.fun
+                residual_sum[n] = np.sum(np.abs(residuals[n]))
+                resid_var = np.sum(results.fun**2)/(results.fun.shape[0] - params.shape[0])
                 try:
                     jacobian = results.jac
                     cov[n] = np.linalg.inv(jacobian.T.dot(jacobian))
-                    var[n] = np.diagonal(cov[n])
+                    var[n] = np.sqrt(np.diagonal(cov[n])*resid_var) #SEM 
                 except Exception as e:
                     if self.verbose:
                         print('\t\t', e)
-                residuals[n] = results.fun
-                residual_sum[n] = np.sum(np.abs(residuals[n]))
-        
+                
         self.iterations = iterations(init_params, cov, var, residuals, params, success, residual_sum)
                         
         index = np.nanargmin(self.iterations.residual_sum)
-        print(index)
         self.params = self.iterations.params[index]        
         self.var = self.iterations.var[index]
         self.residuals = self.iterations.residuals[index]

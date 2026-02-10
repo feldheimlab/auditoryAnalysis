@@ -324,21 +324,21 @@ def PatternToCount(pattern, timerange, timeBinSz = 10, verbose=False):
                         
     else:
         assert 'Unknown pattern shape'
-    return fr
+    return fr, bins
 
 
 def getTTLseg(seg, ttls, datasets):
     return ttls[(ttls<datasets[seg+1])&(ttls>datasets[seg])]
 
 
-def PatternRaster3d(pattern3d, timerange=None):
+def PatternRaster3d(pattern3d, timerange=None, savepath=None):
     # make/visualize a raster plot based on the data given
     ns = np.zeros(3)
     ns[0] = len(pattern3d)
     ns[1] = len(pattern3d[0])
     ns[2] = len(pattern3d[0][0])
     
-    print(ns)
+    print('Raster plot creation of size: ', ns)
     if timerange is None:
         maxtime = 1000
         mintime = 0
@@ -377,7 +377,7 @@ def PatternRaster3d(pattern3d, timerange=None):
                         xs = np.nan
                         ys = np.nan
                     if np.isnan(xs).any(): continue
-                    axs[x][y].scatter(xs, ys, s=1, c='k')
+                    axs[x][y].scatter(xs, ys, s=1, marker='|', c='k')
                     xs = np.nan
                 axs[x][y].set_yticks([])
                 axs[x][y].set_xticks([])
@@ -387,8 +387,7 @@ def PatternRaster3d(pattern3d, timerange=None):
         axs[int(ns[0]-1)][0].set_xticks([mintime, maxtime])
         axs[int(ns[0]-1)][0].set_xticklabels([0, dur])
         plt.subplots_adjust(wspace=0, hspace=0)
-        # savedir = '/media/ackmanadmin/BrianMullen/pop_encoding_fig/'
-        # plt.savefig(savedir + 'raster_example.png', dpi=300)
+        plt.savefig(savepath, dpi=300)
         plt.show()
     else:
         for y in np.arange(ns[1]):
@@ -417,70 +416,8 @@ def PatternRaster3d(pattern3d, timerange=None):
         axs[0].set_xticks([mintime, maxtime])
         axs[0].set_xticklabels([0, dur])
         plt.subplots_adjust(wspace=0, hspace=0)
-        # savedir = '/media/ackmanadmin/BrianMullen/pop_encoding_fig/'
-        # plt.savefig(savedir + 'raster_example.png', dpi=300)
-        plt.show()
-
-
-def PatternRaster(pattern3d, timerange=None, savepath=None):
-    # make/visualize a raster plot based on the data given
-    if savepath != None:
-        dirname = os.path.dirname(savepath)
-        assert os.path.isdir(dirname), 'Directory not found: {}'.format(dirname)
-        save = True
-    else:
-        save = False
-        
-    ns = pattern3d.shape
-    assert len(ns)==3, 'Give only 3d pattern (ny, nx, nrep)'
-    #or assume the first three dimensions after squeeze?
-    
-    if timerange is None:
-        maxtime = 1000
-        mintime = 0
-    elif not isinstance(timerange, list):
-        mintime = 0
-        maxtime = timerange
-    elif len(timerange) == 1:
-        mintime = 0
-        maxtime = timerange[0]
-    elif len(timerange)==2:
-        mintime = timerange[0]
-        maxtime = timerange[1]
-        
-    dur = maxtime - mintime
-    pattern3d = np.squeeze(pattern3d)
-    
-    fig, axs = plt.subplots(ns[0], ns[1], figsize=(10,5))
-    
-    for x in np.arange(ns[0]):
-        xpos = ns[0]-x-1
-        for y in np.arange(ns[1]):
-            for t in np.arange(ns[2]):
-                try:
-                    xs = np.squeeze(pattern3d[x,y,t])
-                    try:
-                        ys = np.ones(xs.shape)*t
-                    except:
-                        ys = np.ones(xs.shape[0])*t
-                except Exception as e:
-                    print(e)
-                    xs = np.nan
-                    ys = np.nan
-                if np.isnan(xs).any(): continue
-                axs[xpos][y].scatter(xs, ys, s=10/ns[2], c='k')
-                xs = np.nan
-            axs[xpos][y].set_yticks([])
-            axs[xpos][y].set_xticks([])
-            axs[xpos][y].set_xlim([mintime, maxtime])
-            axs[xpos][y].set_ylim([-1, ns[2]+1])
-    axs[x][0].set_yticks([0, ns[2]])
-    axs[x][0].set_xticks([mintime, maxtime])
-    axs[x][0].set_xticklabels([0, dur])
-    plt.subplots_adjust(wspace=0, hspace=0)
-    if save:
         plt.savefig(savepath, dpi=300)
-    plt.show()
+        plt.show()
 
 
 def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
@@ -554,7 +491,7 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
         
         for n in np.arange(n_neurons):
             if (n % 100)==0:
-                print('Working on neuron ', n)
+                print('\tWorking on neuron ', n)
             neuron = np.squeeze(asdf[n])
             if np.isnan(neuron[0]):
                 pattern[n] = np.nan
@@ -570,20 +507,20 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
         
         for n in np.arange(n_neurons):
             if (n % 100)==0:
-                print('Working on neuron ', n)
+                print('\tWorking on neuron ', n)
             neuron = np.squeeze(asdf[n])
             for stim in stim_indices:
                 currentstim = np.sort(ttlarray[stims == int(stim)])
                 e, a = np.unravel_index(int(stim), sz)
                 for t, trial in enumerate(currentstim):
                     pattern[n,e,a,0,t] = neuron[(neuron>=trial+window[0])&(neuron<(trial+window[1]))]-trial
-            
+
     if n_diff_stim==1:
         pattern = np.empty((n_neurons, 1, n_stim, 1, n_trial), dtype=object) 
         
         for n in np.arange(n_neurons):
             if (n % 100)==0:
-                print('Working on neuron ', n)
+                print('\tWorking on neuron ', n)
             neuron = np.squeeze(asdf[n])
             for s, stim in enumerate(stim_indices):
                 currentstim = np.sort(ttlarray[stims == int(stim)])
@@ -686,7 +623,8 @@ def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.0
     pvals = np.zeros((nNeu, nWin))
     spont_fr = np.zeros(nNeu)
     dur = np.diff(spont_win)[0]
-    spont_fr = PatternToCount(pattern=pattern, timerange=list(spont_win), timeBinSz=dur)*1000/dur
+    spont_fr, _ = PatternToCount(pattern=pattern, timerange=list(spont_win), timeBinSz=dur)
+    spont_fr=spont_fr*1000/dur
     ns = spont_fr.shape
     activity_df[spave] = np.mean(spont_fr, axis=tuple(range(1, spont_fr.ndim)))
     activity_df[spvar] = np.var(spont_fr, axis=tuple(range(1, spont_fr.ndim)))
@@ -698,8 +636,9 @@ def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.0
         ave = 'avg window {0} - {1} ms'.format(windows[w,0], windows[w,1])
         var = 'var window {0} - {1} ms'.format(windows[w,0], windows[w,1])
         dur = np.diff(window)
-    
-        fr = PatternToCount(pattern=pattern,timerange=list(window), timeBinSz=dur)*1000/dur
+
+        fr, _ = PatternToCount(pattern=pattern,timerange=list(window), timeBinSz=dur)
+        fr = fr*1000/dur
         ns = spont_fr.shape
         activity_df[ave] = np.mean(fr, axis=tuple(range(1, spont_fr.ndim)))
         activity_df[var] = np.var(fr, axis=tuple(range(1, spont_fr.ndim)))
