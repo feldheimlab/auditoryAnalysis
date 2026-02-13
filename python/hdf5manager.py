@@ -291,7 +291,19 @@ def main():
 
 def loadKeys(pathlist, keys=None):
     '''
-    If no keys are passed in, all are loaded
+    Loads specified keys from multiple HDF5 files into a dict keyed by filename.
+
+    Parameters
+    ----------
+    pathlist : str or list of str
+        HDF5 file paths to load from.
+    keys : list of str or None
+        Keys to load from each file. Loads all if None.
+
+    Returns
+    -------
+    dict
+        Mapping of filenames (without extension) to loaded data.
     '''
     if type(pathlist) is str:
         pathlist = [pathlist]
@@ -314,7 +326,18 @@ def loadKeys(pathlist, keys=None):
 
 class hdf5manager:
     def __init__(self, path, verbose=False, create=True):
+        '''
+        HDF5 file manager for saving and loading dictionaries and class objects.
 
+        Parameters
+        ----------
+        path : str
+            Path to .hdf5 or .mat file.
+        verbose : bool
+            Print detailed output. Default False.
+        create : bool
+            Create file if it doesn't exist. Default True.
+        '''
         assert (path.endswith('.hdf5') | path.endswith('.mat'))
         path = os.path.abspath(path)
 
@@ -333,6 +356,7 @@ class hdf5manager:
             self.print()
 
     def print(self):
+        '''Prints all keys and attributes stored in the HDF5 file.'''
         path = self.path
         print()
 
@@ -364,6 +388,13 @@ class hdf5manager:
         print()
 
     def keys(self):
+        '''
+        Returns a list of all keys (datasets and attributes) in the HDF5 file.
+
+        Returns
+        -------
+        list of str
+        '''
         # If not saving or loading, open the file to read it
         if not hasattr(self, 'f'):
             f = h5py.File(self.path, 'r')
@@ -379,6 +410,7 @@ class hdf5manager:
         return keys
 
     def open(self):
+        '''Opens the HDF5 file for direct manual access via self.f.'''
         path = self.path
         verbose = self.verbose
 
@@ -396,10 +428,26 @@ class hdf5manager:
                 '\t handle[0,:,1:6] = np.zeros(x,y,z)\n')
 
     def close(self):
+        '''Closes the HDF5 file handle and removes it from the instance.'''
         self.f.close()
         del self.f
 
     def load(self, target=None, ignore=None):
+        '''
+        Loads datasets and attributes from the HDF5 file.
+
+        Parameters
+        ----------
+        target : str, list of str, or None
+            Specific keys to load. Loads all if None.
+        ignore : str or None
+            Key to skip during loading.
+
+        Returns
+        -------
+        dict or value
+            Dict of loaded data, or a single value if one target was specified.
+        '''
         path = self.path
         verbose = self.verbose
 
@@ -513,6 +561,14 @@ class hdf5manager:
         return data
 
     def delete(self, target):
+        '''
+        Deletes specified keys from the HDF5 file.
+
+        Parameters
+        ----------
+        target : str or list of str
+            Keys to delete.
+        '''
         if type(target) is not list:
             target = [target]
 
@@ -535,15 +591,19 @@ class hdf5manager:
         f.close()
 
     def save(self, data):
-        # data is a class file or dict of keys/data
+        '''
+        Saves a dictionary or class object to the HDF5 file.
+
+        Strings are saved as attributes, arrays as datasets, dicts as groups.
+        Unsupported types are pickled.
+
+        Parameters
+        ----------
+        data : dict or object
+            Data to save. If not a dict, its __dict__ is used.
+        '''
         path = self.path
         verbose = self.verbose
-
-        '''
-        Saves a class or dict to hdf5 file.
-        Note that lists of numbers are not supported, only np arrays or 
-        lists of strings.
-        '''
 
         # Functions to save each type of data:
         # --------------------------------------------------------------

@@ -8,22 +8,19 @@ Date: 2026-02-10
 
 
 import os
-import sys
 import math
-
-sys.path.append('./python')
-# sys.path.append('/home/feldheimlab/Documents/pyWholeBrain/')
 
 from scipy.stats import poisson
 from scipy.stats import nbinom
 import scipy.io as sio
 
 # custom functions
-from preprocessing import *
-from distributions_fit import *
-from visualizations import *
+from python.preprocessing import probeMap, readStimFile, getTTLseg, patternGen, PatternToCount, sigAudFRCompareSpont
+from python.distributions_fit import azimElevCoord, kent_fit, uniform_fit, aic_leastsquare, bic_leastsquare
+from python.visualizations import plot_neurons_relative_to_probe
+from python.random_chord_analysis import DoRandomChordAnalysis
 from config import configs
-from hdf5manager import hdf5manager as h5
+from python.hdf5manager import hdf5manager as h5
 
 import numpy as np
 import pandas as pd
@@ -58,8 +55,47 @@ def get_IDs(cluster: pd.DataFrame,
 
 
 class data_load():
+	'''
+	Load spike-sorted data into a standardized format for pipeline processing.
+
+	Supports kilosort4 (.npy/.tsv) and VISION (.mat) spike sorting outputs.
+	Converts raw spike data into ASDF format (array of spike time lists per neuron)
+	and loads associated metadata (TTL times, channel maps, data segment boundaries).
+
+	Attributes
+	----------
+	spikesorting : str
+		Spike sorter used ('kilosort4' or 'vision').
+	asdf : np.ndarray (dtype=object)
+		Array where each element is a list/array of spike times (ms) for one neuron.
+	ttl_times : np.ndarray
+		TTL pulse times in ms from the recording.
+	datasep : np.ndarray
+		Timestamps marking boundaries between data segments.
+	IDs : np.ndarray
+		Cluster IDs of neurons included in the analysis.
+	chanmap : np.ndarray
+		Channel map of the recording probe.
+	chanposition : np.ndarray
+		(n_channels, 2) array of channel x,y positions on the probe.
+	'''
 	def __init__(self, dataloc, spikesorting, class_col, group, rate, f):
-		
+		'''
+		Parameters
+		----------
+		dataloc : str
+			Path to the spike-sorted output directory.
+		spikesorting : str
+			Spike sorter used ('kilosort4' or 'vision').
+		class_col : str
+			Column name in cluster TSV for neuron classification.
+		group : str
+			Which classification to include ('good', 'mua', or 'all').
+		rate : int
+			Sampling rate in Hz (e.g. 30000).
+		f : file object
+			Open file handle for logging output.
+		'''
 		self.spikesorting = spikesorting
 		parentdir = os.path.dirname(dataloc)
 		self.class_col = class_col
@@ -124,8 +160,8 @@ class data_load():
 			except:
 				cluster = pd.read_csv(os.path.join(dataloc, 'cluster_group.tsv'), sep='\t')
 			
-			cluster.dropna(subset=[class_col], inplace=True)
-			self.cluster = cluster[['cluster_id', class_col, 'ch', 'depth', 'fr']]
+			cluster.dropna(subset=[self.class_col], inplace=True)
+			self.cluster = cluster[['cluster_id', self.class_col, 'ch', 'depth', 'fr']]
 			
 			groups = np.unique(cluster[class_col])
 
@@ -145,8 +181,8 @@ class data_load():
 			
 			self.datasep = datasep['Datasep']
 			
-			self.IDs, IDs_index = get_IDs(self.cluster, class_col=class_col, group=self.group )
-			print('\nProcessing only "good" neurons: ', file=f)
+			self.IDs, IDs_index = get_IDs(self.cluster, class_col=self.class_col, group=self.group )
+			print('\nProcessing {} neurons: '.format(self.group), file=f)
 			print('\nCluster description: ', file=f)
 			print(cluster.describe(), file=f)
 
@@ -388,7 +424,7 @@ if __name__ == '__main__':
 						print('Auditory neurons are determined based by quasipoisson statistics.')
 						neuron_assess = np.where(aud_qpoisson[:,w]==1)[0]
 						frac2 = len(neuron_assess)/nNeu
-						print('\tgood and auditory responsive fraction {0}/{1}: {2}%'.format(len(neuron_assess), nNeu, 
+						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu, 
 																  np.round(frac2*100, 2)), file=f)
 						if fit == 'kent':
 							param_labels = ['kappa', 'beta', 'theta', 'phi', 'alpha', 'height']
@@ -485,43 +521,25 @@ if __name__ == '__main__':
 							print('Kent distribution data saved to :', winsavedir, file=f)    
 				
 				elif fit == 'RandomChord':
-					#code here
-					print('NEED TO COMPLETE RandomChord', file=f)    
+					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
+					if not os.path.exists(seqsavedir):
+						os.mkdir(seqsavedir)
 
-# 					activity_df2, IFR, vecTime = sigAudFR_zeta_pvalue(asdf, subset_ttls, 
-# 																		datasep, seg, stim_dur=20000, 
-# 																		boolPlot=False, boolReturnRate=False)
-					
+					# Load picked_tones from stimulus .mat file
+					stim_mat_path = os.path.join(config.stimdir, fname + '.mat')
+					pt = sio.loadmat(stim_mat_path)
+					picked_tones = pt['picked_tones']
 
-# 					#which ones to process (only auditory responsive)
+					nreps = mult
+					print('Running RandomChord STA analysis (nreps={}, tn={})'.format(nreps, tn), file=f)
+					results = DoRandomChordAnalysis(
+						data_raw.asdf, subset_ttls, nreps,
+						picked_tones, tn, data_raw.datasep[seg], nNeu
+					)
 
-					
+					np.save(os.path.join(seqsavedir, 'stas.npy'), np.array(results['stas'], dtype=object))
+					np.save(os.path.join(seqsavedir, 'stasigs.npy'), np.array(results['stasigs'], dtype=object))
+					np.save(os.path.join(seqsavedir, 'nSpikes.npy'), results['nSpikes'])
+					np.save(os.path.join(seqsavedir, 'meanpic.npy'), results['meanpic'])
 
-
-# 					nmult = len(multiplier)
-# 					nsub_ttls = len(subset_ttls)
-					
-# 					ttlsperfile = 20000/tonedur
-# 					nchanges = len(tonesdirlist)*ttlsperfile
-
-# 					if nsub_ttls == len(tonesdirlist):
-# 						new_sub_ttls = np.zeros(ttlsperfile*nsub_ttls)
-# 						tt = 0
-# 						for ttl in subset_ttls:
-# 							for t in np.arange(ttlsperfile):
-# 								new_sub_ttls[tt] = ttl+t*tondur
-# 								tt+=1
-
-# 					stims = 
-
-# 					pattern, ttlarray = patternGen(asdf[neurons], subset_ttls, stims, num_stim, 
-# 												   datasep[seg],  window=timewindow, force=False)
-
-# 					def stacalc_sub(asdf:np.array, 
-#                 					ttls:np.array):
-
-# 						patnum = len(    ) / nreps;
-
-# 					stacalc_sub()
-# 					print('')	            
-		   
+					print('RandomChord analysis data saved to:', seqsavedir, file=f)

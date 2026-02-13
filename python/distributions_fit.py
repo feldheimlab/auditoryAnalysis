@@ -17,7 +17,30 @@ from scipy import stats
 from scipy import special
 
 def chiSquaredTest(data, modelfit, params, plot=False, verbose=False, savepath=None):
-    
+    '''Perform a chi-squared goodness-of-fit test between observed data and model.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Observed data values.
+    modelfit : np.ndarray
+        Model predicted values.
+    params : array-like
+        Fitted parameters, used to compute degrees of freedom.
+    plot : bool, optional
+        If True, show diagnostic plots (chi-squared distribution and
+        observed vs predicted scatter). Default is False.
+    verbose : bool, optional
+        If True, print chi-squared statistic and per-degree-of-freedom
+        value. Default is False.
+    savepath : str or None, optional
+        Path to save the diagnostic figure. Default is None.
+
+    Returns
+    -------
+    scipy.stats.Power_divergenceResult
+        Chi-squared test result containing statistic and p-value.
+    '''
     normdata = np.sum(data)*modelfit/np.sum(modelfit)
     
     chiresults = stats.chisquare(data, normdata)
@@ -58,8 +81,31 @@ def chiSquaredTest(data, modelfit, params, plot=False, verbose=False, savepath=N
 
 class uniform_fit():
     def __init__(self, data, X, init_params=None, verbose=False, plot=False):
-        '''
-        fit uniform distribution of binned data
+        '''Fit a uniform (constant height) distribution to data using least-squares.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Observed data values.
+        X : np.ndarray
+            Independent variable / position values.
+        init_params : float or None, optional
+            Initial height estimate. If None, estimated from data mean.
+        verbose : bool, optional
+            If True, print diagnostic information. Default is False.
+        plot : bool, optional
+            If True, generate diagnostic plots. Default is False.
+
+        Attributes
+        ----------
+        params : np.ndarray
+            Fitted parameters [height].
+        fitresult : np.ndarray
+            Model predictions at the input positions.
+        residuals : np.ndarray
+            Difference between observed data and model fit.
+        residuals_sum : float
+            Sum of absolute residuals.
         '''
         self.data = data
         self.X = X
@@ -78,17 +124,57 @@ class uniform_fit():
         self.chiresults = chiSquaredTest(self.data, self.fitresult, self. params, plot=False)
         
     def uniform(self, height, X):
+        '''Return a constant array of height for all positions in X.
+
+        Parameters
+        ----------
+        height : float
+            Constant value to fill.
+        X : np.ndarray
+            Position values (used only for shape).
+
+        Returns
+        -------
+        np.ndarray
+            Array of constant height with same shape as X.
+        '''
         return height*np.ones_like(X)
 
     def uniform_params(self, data, X):
+        '''Estimate initial uniform parameters from data.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Observed data values.
+        X : np.ndarray
+            Position values (unused, kept for interface consistency).
+
+        Returns
+        -------
+        float
+            Mean of data, used as initial height estimate.
+        '''
         height = np.mean(data)
         return height
     
     def predict(self, x_new):
+        '''Predict values at new positions using the fitted uniform model.
+
+        Parameters
+        ----------
+        x_new : np.ndarray
+            New position values at which to evaluate the model.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted constant values at x_new.
+        '''
         return self.uniform(*self.params, x_new)
 
 '''
-# Example code on usage: 
+# Example code on usage:
 
 data = np.array([1,0,1,0,1,2,2,4,13,24,14,10,6,3,1,1,3,2,2,1])
 bins = np.arange(0,data.shape[0],1)
@@ -114,8 +200,28 @@ plt.show()
 
 class gaussian_fit():
     def __init__(self, data, X=None, init_params=None, verbose=False, plot=False):
-        '''
-        fit normal distribution with a uniform background of binned data
+        '''Fit a Gaussian distribution with uniform background to binned data using least-squares.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Observed data values.
+        X : np.ndarray or None, optional
+            Position values. If None, auto-generated from data.shape.
+        init_params : list or None, optional
+            Initial parameters [height, mean, std, base]. If None,
+            estimated from data moments.
+        verbose : bool, optional
+            If True, print diagnostic information. Default is False.
+        plot : bool, optional
+            If True, generate diagnostic plots. Default is False.
+
+        Attributes
+        ----------
+        params : np.ndarray
+            Fitted parameters [height, mean, std, base].
+        fitresult : np.ndarray
+            Model predictions at the input positions.
         '''
         self.data = data
         self.X = X
@@ -152,18 +258,43 @@ class gaussian_fit():
         height = datam.max()
         return [height, xmean, xsd, base]
 
-    # Gaussian with uniform background
     def gaussian(self, params, X):
+        '''Evaluate Gaussian function with uniform background.
+
+        Parameters
+        ----------
+        params : list
+            Parameters [height, xmean, xsd, base].
+        X : np.ndarray
+            Position values at which to evaluate.
+
+        Returns
+        -------
+        np.ndarray
+            Gaussian function values at X.
+        '''
         height, xmean, xsd, base = params
         fxn = lambda x: height*np.exp(-(((xmean-x)/xsd)**2))+base
         return fxn(X)
 
     def predict(self, x_new):
+        '''Predict values at new positions using the fitted Gaussian model.
+
+        Parameters
+        ----------
+        x_new : np.ndarray
+            New position values at which to evaluate the model.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted Gaussian values at x_new.
+        '''
         return self.gaussian(self.params, x_new)
-            
+
 
 '''
-# Example code on usage: 
+# Example code on usage:
 
 data = np.array([1,0,1,0,1,2,2,4,13,24,14,10,6,3,1,1,3,2,2,1])
 
@@ -189,11 +320,30 @@ plt.show()
 '''
 
 
-# Vonm Mises 
+# Vonm Mises
 class vonMises_fit():
     def __init__(self, data, X=None, init_params=None, verbose=True, plot=False):
-        '''
-        fit vonMises distribution of binned data
+        '''Fit a von Mises (circular normal) distribution to binned data using least-squares.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Observed data values.
+        X : np.ndarray or None, optional
+            Position values in radians. If None, auto-generated from
+            data.shape.
+        init_params : list or None, optional
+            Initial parameters [height, mean, concentration]. If None,
+            estimated from data moments.
+        verbose : bool, optional
+            If True, print diagnostic information. Default is True.
+        plot : bool, optional
+            If True, generate diagnostic plots. Default is False.
+
+        Attributes
+        ----------
+        params : np.ndarray
+            Fitted parameters [height, mean, concentration].
         '''
         self.data = data
         self.X = X
@@ -239,11 +389,23 @@ class vonMises_fit():
         return [height, xmean, conc]
     
     def predict(self, x_new):
+        '''Predict values at new positions using the fitted von Mises model.
+
+        Parameters
+        ----------
+        x_new : np.ndarray
+            New position values in radians at which to evaluate the model.
+
+        Returns
+        -------
+        np.ndarray
+            Predicted von Mises values at x_new.
+        '''
         return self.vonMises(self.params, x_new)
 
 
 '''
-# Example code on usage: 
+# Example code on usage:
 
 data = np.array([ 6.,  7.,  7.,  3.,  6.,  9., 10.,  8.,  7., 20., 14., 17., 14., 18.,  9.,  7., 12.])
 azim = np.array([-144, -126, -108, -90, -72, -54, -36, -18, 0, 18, 36, 54, 72, 90, 108, 126, 144])
@@ -271,6 +433,22 @@ plt.show()
 # Kent distribution
 
 def azimElevCoord(azim, elev, data):
+    '''Convert azimuth/elevation grid coordinates to 3D Cartesian with data values.
+
+    Parameters
+    ----------
+    azim : np.ndarray
+        Azimuth angles in radians.
+    elev : np.ndarray
+        Elevation angles in radians.
+    data : np.ndarray
+        2D data array of shape (len(elev), len(azim)).
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape (n_points, 4) where columns are [x, y, z, data_value].
+    '''
     corz = np.cos(elev)
     xs = np.zeros([elev.shape[0]*azim.shape[0],4])
     assert data.size == xs.shape[0], 'Data and x coordinates are not matching'
@@ -289,7 +467,22 @@ def azimElevCoord(azim, elev, data):
     return xs
 
 def grid3d(gridsize = 200):
+    '''Generate a 3D spherical mesh grid for visualization.
 
+    Parameters
+    ----------
+    gridsize : int, optional
+        Number of grid points per dimension. Default is 200.
+
+    Returns
+    -------
+    x : np.ndarray
+        X-coordinates of the sphere surface.
+    y : np.ndarray
+        Y-coordinates of the sphere surface.
+    z : np.ndarray
+        Z-coordinates of the sphere surface.
+    '''
     u = np.linspace(0, 2 * np.pi, gridsize)
     v = np.linspace(0, np.pi, gridsize)
 
@@ -314,8 +507,43 @@ def grid3d(gridsize = 200):
 
 class kent_fit():
     def __init__(self, data, xyz, datashape, n_iter=50, init_params=None, verbose=True, plot=False):
-        '''
-        fit kent distribution of averaged data
+        '''Fit a Kent (Fisher-Bingham) distribution on the sphere to spatial receptive field data.
+
+        Uses least-squares optimization with n_iter random starting points
+        to avoid local minima.
+
+        Parameters
+        ----------
+        data : np.ndarray
+            Observed firing rate values.
+        xyz : np.ndarray
+            Cartesian coordinates of shape (n_points, 3).
+        datashape : tuple
+            Original 2D shape (elevation, azimuth) for reshaping results.
+        n_iter : int, optional
+            Number of random restarts. Default is 50.
+        init_params : unused
+            Reserved for future use.
+        verbose : bool, optional
+            If True, print iteration progress. Default is True.
+        plot : bool, optional
+            If True, generate diagnostic plots. Default is False.
+
+        Attributes
+        ----------
+        params : np.ndarray
+            Best-fit parameters [kappa, beta, theta, phi, alpha, height].
+        var : np.ndarray
+            Parameter standard errors from the best iteration.
+        fitdist : np.ndarray
+            Model predictions reshaped to datashape.
+        residuals : np.ndarray
+            Residuals from the best iteration.
+        residual_sum : float
+            Sum of absolute residuals from the best iteration.
+        iterations : namedtuple
+            All iteration results with fields: init_params, cov, var,
+            residuals, params, success, residual_sum.
         '''
         
         self.data = data
@@ -377,15 +605,51 @@ class kent_fit():
         self.chiresults = chiSquaredTest(self.data.reshape(self.data.size), self.fitdist.reshape(self.fitdist.size), self.params)
                         
     def kent(self, xyz, height, beta, kappa, gamma1, gamma2, gamma3):
-        # definition of the kent distribution
-        kent_dist = height * np.exp(-kappa) * np.exp(kappa * np.dot(xyz, gamma1) + 
+        '''Evaluate the Kent distribution on the sphere.
+
+        Parameters
+        ----------
+        xyz : np.ndarray
+            Cartesian coordinates of shape (n, 3).
+        height : float
+            Amplitude scaling factor.
+        beta : float
+            Ovalness parameter.
+        kappa : float
+            Concentration parameter.
+        gamma1 : np.ndarray
+            Mean direction vector.
+        gamma2 : np.ndarray
+            Major axis direction vector.
+        gamma3 : np.ndarray
+            Minor axis direction vector.
+
+        Returns
+        -------
+        np.ndarray
+            Kent distribution values at each point.
+        '''
+        kent_dist = height * np.exp(-kappa) * np.exp(kappa * np.dot(xyz, gamma1) +
                 beta * kappa * (np.dot(xyz, gamma2)**2 - np.dot(xyz, gamma3)**2))
         return np.squeeze(kent_dist)
     
     def rodrot(self, targetvector, rotationaxis, angle):
-        # this function does rotation of a vector in 3d space accordingly to
-        # Rodrigues rotation formula.
+        '''Rotate a vector in 3D space using Rodrigues' rotation formula.
 
+        Parameters
+        ----------
+        targetvector : np.ndarray
+            Vector to rotate.
+        rotationaxis : np.ndarray
+            Unit vector defining the axis of rotation.
+        angle : float
+            Rotation angle in radians.
+
+        Returns
+        -------
+        np.ndarray
+            Rotated vector.
+        '''
         r1 = targetvector*np.cos(angle)
         r2 = np.cross(rotationaxis, targetvector) * np.sin(angle)
         r3 = rotationaxis * (np.transpose(rotationaxis) * targetvector) * (1 - np.cos(angle))
@@ -393,15 +657,38 @@ class kent_fit():
         return np.squeeze(r1 + r2 + r3)
     
     def sph2cart(self, theta, phi):
-        # this returns cartesian coord based on the spherical coordinates.
-        # this assumes a unit circle
+        '''Convert spherical coordinates to Cartesian on the unit sphere.
+
+        Parameters
+        ----------
+        theta : float
+            Polar angle in radians.
+        phi : float
+            Azimuthal angle in radians.
+
+        Returns
+        -------
+        list
+            Cartesian coordinates [x, y, z].
+        '''
         return [np.sin(theta)*np.cos(phi), np.sin(theta)*np.sin(phi), np.cos(theta)]
     
     def sphericalUnit(self, theta, phi):
-        # this function gives a unit vectors of spherical coordinates.
-        # the notation is based on Arfken
-        # theta is polar angle
-        # phi is azimuthal angle.
+        '''Return unit vectors for spherical coordinates (Arfken notation).
+
+        Parameters
+        ----------
+        theta : float
+            Polar angle in radians.
+        phi : float
+            Azimuthal angle in radians.
+
+        Returns
+        -------
+        np.ndarray
+            3x3 matrix of unit vectors where columns correspond to
+            the radial, polar, and azimuthal directions.
+        '''
         st = np.sin(theta);
         ct = np.cos(theta);
         sp = np.sin(phi);
@@ -413,6 +700,20 @@ class kent_fit():
         return unitvecs
     
     def kent_dist_fit(self, params, xyz):
+        '''Evaluate the Kent distribution from a parameter vector.
+
+        Parameters
+        ----------
+        params : array-like
+            Parameters [kappa, beta, theta, phi, alpha, height].
+        xyz : np.ndarray
+            Cartesian coordinates of shape (n, 3).
+
+        Returns
+        -------
+        np.ndarray
+            Kent distribution values at each point.
+        '''
         kappa, beta, theta, phi, alpha, height = params
 
         unitvecs = self.sphericalUnit(theta, phi)
@@ -424,6 +725,13 @@ class kent_fit():
         return self.kent(xyz, height, beta, kappa, gamma1, gamma2, gamma3)
 
     def kentRandStart(self):
+        '''Generate random starting parameters within bounds.
+
+        Returns
+        -------
+        np.ndarray
+            Array of 6 parameters [kappa, beta, theta, phi, alpha, height].
+        '''
         kappa = np.random.uniform(low=0, high=100, size=1)
         beta = np.random.uniform(low=-0.5, high=0.5, size=1)
         theta = np.random.uniform(low=0, high=np.pi/2, size=1)
@@ -435,11 +743,39 @@ class kent_fit():
 
 
 def aic_leastsquare(residuals, params):
+    '''Compute AIC (Akaike Information Criterion) for a least-squares fit.
+
+    Parameters
+    ----------
+    residuals : np.ndarray
+        Residuals from the model fit.
+    params : array-like
+        Fitted parameters (used to determine number of parameters).
+
+    Returns
+    -------
+    float or None
+        AIC value, or None if residuals contain NaN.
+    '''
     if not np.isnan(residuals).any():
         return residuals.size * np.log(np.var(residuals)) + 2*len(params)
 
 
 def bic_leastsquare(residuals, params):
+    '''Compute BIC (Bayesian Information Criterion) for a least-squares fit.
+
+    Parameters
+    ----------
+    residuals : np.ndarray
+        Residuals from the model fit.
+    params : array-like
+        Fitted parameters (used to determine number of parameters).
+
+    Returns
+    -------
+    float or None
+        BIC value, or None if residuals contain NaN.
+    '''
     if not np.isnan(residuals).any():
         return residuals.size * np.log(np.var(residuals)) + len(params)*np.log(residuals.size)
 

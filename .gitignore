@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Data files
+*.npy
+*.hdf5
+*.h5
+*.mat
+*.csv

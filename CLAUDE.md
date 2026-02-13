@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Auditory neural recording analysis pipeline (Feldheim Lab, UC Santa Cruz). Processes electrophysiological spike-sorted data to identify auditory-responsive neurons and fit spatial receptive fields to statistical distributions. Originally ported from MATLAB (see `pipeline_organization.md` for the original structure).
+Auditory neural recording analysis pipeline (Feldheim Lab, UC Santa Cruz). Processes electrophysiological spike-sorted data to identify auditory-responsive neurons and fit spatial receptive fields to statistical distributions. Originally ported from MATLAB.
 
 ## Running the Pipeline
 
@@ -63,7 +63,7 @@ For each stimulus segment defined in config.stim_dict:
 
 ### Import Pattern
 
-Modules in `python/` are imported via `sys.path.append('./python')` with wildcard imports (`from preprocessing import *`). Run the pipeline from the repository root.
+`python/` is a package (has `__init__.py`). The pipeline uses explicit named imports (`from python.preprocessing import probeMap, readStimFile, ...`). Modules within the package use relative imports (`from .preprocessing import ...`). Run the pipeline from the repository root.
 
 ## Key Data Structures
 
@@ -88,11 +88,11 @@ results/
 
 ## Dependencies
 
-numpy, scipy, pandas, matplotlib, h5py, zetapy. No requirements.txt exists; install manually.
+Install with `pip install -r requirements.txt`. Requires: numpy, scipy, pandas, matplotlib, h5py, zetapy.
 
-## Incomplete Features
+## RandomChord Analysis
 
-- `python/random_chord_analysis.py` is empty. RandomChord analysis is stubbed out in the main pipeline (lines ~487-526) with commented-out code. Reference MATLAB implementation exists at `python/DoRandomChordAnalysis.m`.
+`python/random_chord_analysis.py` implements spike-triggered average (STA) analysis for random chord stimuli, ported from `python/DoRandomChordAnalysis.m`. Integrated into the pipeline via the `elif fit == 'RandomChord'` branch. Enable by uncommenting the `seg2` entry in `config.stim_dict`.
 
 ## Development Notes
 

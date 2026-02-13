@@ -246,18 +246,32 @@ def readStimFile(wd, file):
 def PatternToCount(pattern, timerange, timeBinSz = 10, verbose=False):
 
     '''
-    Reads the stimulation files formated for this analysis. 
-    This file is generated at the time of generating the sound stimulations.  
-    
-    Arguments:
-        wd: working directory where the file is saved
-        file: the stimulation file, indicating when each stimulation occured
+    Convert a spike pattern array into firing rate histograms by binning
+    spikes in time.
 
-    Returns:
-       stims: 2-D array [order of one set of trials, N-trials]
-       num_stim: list of lists, indicating the number of stimulations for each condition 
-                ie:[[azim stims], [elev stims], [laser stims]]
-       stim_ind: 1-D of the unique indices of each the stimulation
+    Parameters
+    ----------
+    pattern : np.ndarray, dtype=object
+        Spike pattern array of 3-5 dimensions. For a 5D array the axes are
+        [neurons, elevation, azimuth, condition, trial], where each element
+        contains an array of spike times.
+    timerange : list or int
+        Time window for binning. If a two-element list, interpreted as
+        [start, end] in ms. If a single int or one-element list, the window
+        is [0, timerange] ms. If None, defaults to [0, 2000] ms.
+    timeBinSz : int, optional
+        Size of each time bin in ms. Default is 10.
+    verbose : bool, optional
+        If True, print additional information during processing.
+
+    Returns
+    -------
+    fr : np.ndarray
+        Binned spike counts. Has the same leading dimensions as ``pattern``
+        with an additional final axis of length ``len(bins) - 1``
+        representing time bins.
+    bins : np.ndarray
+        Bin edges used for histogramming, in ms.
     '''
 
 
@@ -328,10 +342,50 @@ def PatternToCount(pattern, timerange, timeBinSz = 10, verbose=False):
 
 
 def getTTLseg(seg, ttls, datasets):
+    '''
+    Extract TTL times that fall within a given data segment.
+
+    Parameters
+    ----------
+    seg : int
+        Segment index. TTLs are selected between ``datasets[seg]`` and
+        ``datasets[seg+1]``.
+    ttls : np.ndarray
+        1-D array of all TTL times (in ms).
+    datasets : np.ndarray
+        1-D array of segment boundary timestamps. Must contain at least
+        ``seg + 2`` elements.
+
+    Returns
+    -------
+    np.ndarray
+        TTL times that fall strictly within the segment boundaries
+        ``(datasets[seg], datasets[seg+1])``.
+    '''
     return ttls[(ttls<datasets[seg+1])&(ttls>datasets[seg])]
 
 
 def PatternRaster3d(pattern3d, timerange=None, savepath=None):
+    '''
+    Create and save a raster plot from a 3D spike pattern array.
+
+    Generates a grid of raster subplots where rows correspond to
+    elevations, columns to azimuths, and scatter points within each
+    subplot represent spike times across trials.
+
+    Parameters
+    ----------
+    pattern3d : list or array-like
+        3-D nested structure ``[elevation][azimuth][trial]`` where each
+        innermost element is an array of spike times (in ms).
+    timerange : list or None, optional
+        Time window for the x-axis as ``[start, end]`` in ms. If a
+        single int or one-element list, interpreted as ``[0, timerange]``.
+        If None, defaults to ``[0, 1000]`` ms.
+    savepath : str or None, optional
+        File path to save the figure. If None, the figure is still
+        displayed but not saved.
+    '''
     # make/visualize a raster plot based on the data given
     ns = np.zeros(3)
     ns[0] = len(pattern3d)
@@ -421,6 +475,49 @@ def PatternRaster3d(pattern3d, timerange=None, savepath=None):
 
 
 def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
+    '''
+    Generate a 5D spike pattern array aligned to stimulus onsets.
+
+    Assigns each neuron's spikes to the corresponding stimulus position
+    based on TTL timing and the stimulus presentation order. When the
+    number of TTLs does not match the expected count from the stimulus
+    file, the ``force`` flag allows approximate recovery of missing TTLs.
+
+    Parameters
+    ----------
+    asdf : np.ndarray, dtype=object
+        Array of spike times per neuron (ASDF format). Each element is a
+        1-D array of spike times in ms.
+    ttls : np.ndarray
+        1-D array of TTL onset times (in ms) for the current data
+        segment.
+    stims : np.ndarray
+        2-D array of stimulus presentation order with shape
+        ``(n_trials, stim_per_trial)``. Each entry is a stimulus index.
+    num_stim : list of lists
+        Unique stimulus values per dimension, e.g.
+        ``[[elev_values], [azim_values]]`` or with a third laser
+        dimension. The lengths determine the shape of the output pattern.
+    ttl_trig : float
+        Segment start time offset (in ms), used for diagnostic printing.
+    window : list, optional
+        Two-element list ``[start, end]`` in ms defining the peri-stimulus
+        time window for extracting spikes. Default is ``[0, 2000]``.
+    force : bool, optional
+        If True, approximate missing TTLs when the TTL count does not
+        match the expected number of stimulus presentations. Default is
+        False.
+
+    Returns
+    -------
+    pattern : np.ndarray, dtype=object
+        5-D array ``[neurons, elevation, azimuth, condition, trials]``
+        where each element contains an array of spike times relative to
+        stimulus onset.
+    ttlarray : np.ndarray
+        TTLs reshaped into the same ``(n_trials, stim_per_trial)`` layout
+        as ``stims``.
+    '''
     if window == 0:
         window=[0,2000]
     
@@ -539,6 +636,50 @@ def sigAudFR_zeta_pvalue(asdf:np.array,
                         stim_dur:int =10, 
                         boolPlot:bool = False, # Do we want to plot the results?
                         boolReturnRate:bool = False): # Do we want to return the instantaneous rates?  This increases the computational time emessly
+    '''
+    Test auditory responsiveness using the ZETA test for each neuron.
+
+    Applies the ZETA test (Montijn et al.) to determine whether each
+    neuron's firing pattern is significantly modulated by stimulus
+    presentation. Optionally returns instantaneous firing rates.
+
+    Parameters
+    ----------
+    asdf : np.ndarray, dtype=object
+        Array of spike times per neuron (ASDF format). Each element is a
+        1-D array of spike times in ms.
+    ttls : np.ndarray
+        1-D array of stimulus onset times (in ms).
+    datasep : np.ndarray
+        1-D array of segment boundary timestamps used to restrict each
+        neuron's spikes to the relevant recording segment.
+    seg : int
+        Segment index. Spikes are selected between ``datasep[seg]`` and
+        ``datasep[seg+1]``.
+    stim_dur : int, optional
+        Stimulus duration in ms, used to construct onset/offset event
+        arrays for the t-test. Default is 10.
+    boolPlot : bool, optional
+        If True, plot the ZETA test results for each neuron. Default is
+        False.
+    boolReturnRate : bool, optional
+        If True, return instantaneous firing rates (IFR) and
+        corresponding time vectors. Increases computation time
+        substantially. Default is False.
+
+    Returns
+    -------
+    activity_df : pd.DataFrame
+        DataFrame with one row per neuron containing columns ``'zeta p'``
+        (ZETA test p-value) and ``'t test p'`` (mean-rate t-test
+        p-value).
+    IFR : np.ndarray or np.nan
+        Array of instantaneous firing rate vectors per neuron if
+        ``boolReturnRate`` is True, otherwise ``np.nan``.
+    vecTime : np.ndarray or np.nan
+        Array of time vectors corresponding to each neuron's IFR if
+        ``boolReturnRate`` is True, otherwise ``np.nan``.
+    '''
     print('Calculating Zeta p-values')
     # use minimum of trial-to-trial durations as analysis window size
     dblUseMaxDur = np.min(np.diff(ttls))
@@ -586,7 +727,45 @@ def sigAudFR_zeta_pvalue(asdf:np.array,
 
 
 def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.001, minspike=10):
-    
+    '''
+    Identify auditory-responsive neurons by comparing evoked firing rates
+    to a spontaneous baseline.
+
+    For each analysis window, computes firing rates and tests whether
+    they differ significantly from the spontaneous window using one or
+    more statistical models. Supports Poisson, quasi-Poisson, and
+    negative binomial tests.
+
+    Parameters
+    ----------
+    pattern : np.ndarray, dtype=object
+        4-D spike pattern array ``[neurons, x, y, trials]`` where each
+        element contains spike times.
+    spont_win : list
+        Two-element list ``[start, end]`` in ms defining the spontaneous
+        (baseline) time window.
+    windows : np.ndarray
+        Array of shape ``(nWin, 2)`` where each row is an evoked time
+        window ``[start, end]`` in ms to test against spontaneous
+        activity.
+    test : str or list of str, optional
+        Statistical test(s) to apply. Valid values are ``'poisson'``,
+        ``'quasipoisson'``, and ``'nbinom'``. Default is ``'poisson'``.
+    siglvl : float or list of float, optional
+        Significance threshold(s) corresponding to each test. Default is
+        0.001.
+    minspike : int, optional
+        Minimum spike count threshold for a neuron to be considered.
+        Default is 10.
+
+    Returns
+    -------
+    activity_df : pd.DataFrame
+        DataFrame with one row per neuron containing columns for mean
+        firing rate, variance, p-values, and boolean significance flags
+        (positive and negative) for each window and test combination.
+    '''
+
     if type(test) is str:
         test = [test]
     if type(siglvl) is float:

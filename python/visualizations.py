@@ -1,16 +1,128 @@
 import os
-import sys
 import math
 
-sys.path.append('./python')
-
-from preprocessing import PatternToCount, probeMap
+from .preprocessing import PatternToCount, probeMap
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from .distributions_fit import gaussian_fit, chiSquaredTest
 
+
+class load_RF_data():
+    def __init__(self, dataloc, spikesorting='kilosort4'):
+        '''Load receptive field analysis results from the pipeline output directory.
+
+        Reads pattern arrays, analysis windows, activity DataFrames, Kent
+        distribution fit results, and cluster information produced by the
+        auditory analysis pipeline.
+
+        Parameters
+        ----------
+        dataloc : str
+            Path to a segment results directory, e.g.
+            ``'results/seg5 mult 10/'``.
+        spikesorting : str, optional
+            Spike sorter used to produce the data. Must be ``'kilosort4'``
+            or ``'vision'``. Default is ``'kilosort4'``.
+
+        Attributes
+        ----------
+        pattern : np.ndarray
+            5-D spike pattern array loaded from ``pattern.npy``.
+        windows : np.ndarray
+            Analysis time windows loaded from ``windows.npy``.
+        activity_df : pd.DataFrame
+            Per-neuron activity metrics loaded from ``activity-df.csv``.
+        good_neurons : np.ndarray
+            Indices of neurons passing quality criteria.
+        aic_bic : list of np.ndarray
+            AIC/BIC values for each analysis window.
+        datafits : list of np.ndarray
+            Observed firing-rate maps for each window.
+        modelfits : list of np.ndarray
+            Model-predicted firing-rate maps for each window.
+        parameters : list of np.ndarray
+            Fitted distribution parameters for each window.
+        variances : list of np.ndarray
+            Parameter variance estimates for each window.
+        neuron_assess : list of np.ndarray
+            Per-neuron fit assessment flags for each window.
+        templates : np.ndarray
+            Spike waveform templates (kilosort4) or EI summary (vision).
+        channelposition : np.ndarray
+            XY positions of recording channels on the probe.
+        '''
+        assert os.path.exists(dataloc), 'Data directory not found: ' + dataloc
+        print('Loading data from: \n\t', dataloc)
+        try:
+            kilosort_loc = os.path.join(os.path.dirname(os.path.dirname(dataloc)), 'kilosort4')
+            assert os.path.exists(kilosort_loc), 'Could not find kilosort data.  Expected locatation: \n\t' + kilosort_loc
+            print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
+        except:
+            kilosort_loc = None
+            print('Some data will not be shown.')
+            
+        image_save_loc = os.path.join(os.path.dirname(dataloc), 'images')
+        assert os.path.exists(image_save_loc), 'Could not find image save location.  Expected locatation: \n\t' + image_save_loc
+        print('\nImage save location found at the expected locatation: \n\t' + image_save_loc)
+
+            
+        self.kilosort_loc = kilosort_loc
+        self.dataloc = dataloc
+        self.parenetdir = os.path.dirname(dataloc)
+        self.image_save_loc = image_save_loc
+        self.spikesorting = spikesorting
+        self.azimuths = np.arange(17)*18 - 144
+        self.elevations = np.arange(5)*20
+
+        window_subdir = []
+        file_sublist = []
+        directory_list = os.listdir(dataloc)
+        for item in directory_list:
+            itemq = os.path.join(dataloc, item)
+            if os.path.isdir(itemq): window_subdir.append(itemq)
+            if os.path.isfile(item): file_sublist.append(item)
+        print('\nImages will be saved at: \n\t', self.image_save_loc)
+        self.window_subdir = window_subdir
+        self.file_list = file_sublist
+        
+        self.pattern = np.load(os.path.join(dataloc, 'pattern.npy'), allow_pickle=True)
+        self.windows = np.load(os.path.join(dataloc, 'windows.npy'))
+        self.spont_win = np.load(os.path.join(dataloc, 'spont_win.npy'))
+        self.good_neurons = np.load(os.path.join(dataloc, 'good_neurons.npy'))
+        self.activity_df = pd.read_csv(os.path.join(dataloc, 'activity-df.csv'), sep=',', index_col=0)
+        if spikesorting == 'kilosort4':
+            self.cluster = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
+            self.templates = np.load(os.path.join(kilosort_loc, 'templates.npy'))
+            self.channelposition = np.load(os.path.join(kilosort_loc, 'channel_positions.npy'))
+        elif spikesorting == 'vision':
+            self.templates = sio.loadmat(os.path.join(self.parenetdir,'eisummary.mat'))
+            self.channelposition = np.flip(probeMap(probe='AN'), 1)
+            
+        self.aic_bic = []
+        self.datafits = []
+        self.modelfits = []
+        self.neuron_assess = []
+        self.parameters = []
+        self.sumresid = []
+        self.variances = []
+        
+        for w, window in enumerate(self.windows):
+            for subdir in window_subdir:
+                if subdir.endswith(str(w)):
+                    current_subidir = subdir
+                    break
+            print('\nLoading fit data from {0} Window, {1} ms:  {2}'.format(w, window, 
+                  os.path.basename(os.path.normpath(current_subidir))))
+            self.aic_bic.append(np.load(os.path.join(current_subidir, 'aic_bic.npy')))
+            self.datafits.append(np.load(os.path.join(current_subidir, 'datafits.npy')))
+            self.modelfits.append(np.load(os.path.join(current_subidir, 'modelfits.npy')))
+            self.neuron_assess.append(np.load(os.path.join(current_subidir, 'neuron_assess.npy')))
+            self.parameters.append(np.load(os.path.join(current_subidir, 'parameters.npy')))
+            self.sumresid.append(np.load(os.path.join(current_subidir, 'sumresid.npy')))
+            self.variances.append(np.load(os.path.join(current_subidir, 'variances.npy')))
 
 def normalize_templates(template_matrix, norm_factor=None):
 
@@ -40,7 +152,20 @@ def normalize_templates(template_matrix, norm_factor=None):
 
 
 def plot_neurons_relative_to_probe(data_obj, save_image_dir):
-		
+		'''Plot neuron cluster locations relative to the recording probe layout.
+
+		Generates a figure showing where each neuron cluster sits on the
+		physical probe geometry, colour-coded by classification group, and
+		saves the result as a PNG image.
+
+		Parameters
+		----------
+		data_obj : data_load
+			Loaded data object containing ``chanposition``, ``cluster``,
+			``class_col``, and ``spikesorting`` attributes.
+		save_image_dir : str
+			Directory path where the output image will be saved.
+		'''
 		if data_obj.spikesorting == 'vision':
 			fig, axs = plt.subplots(1,2, figsize = (5,5), sharey=True)    
 
@@ -87,7 +212,25 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 
 
 def PatternRaster3d(pattern3d, timerange=None, savepath=None):
-    # make/visualize a raster plot based on the data given
+    '''Create and save a raster plot from a 3D spike pattern array.
+
+    Each sub-panel corresponds to one elevation/azimuth combination, with
+    individual trials stacked vertically and spike times plotted along the
+    horizontal axis.
+
+    Parameters
+    ----------
+    pattern3d : nested list or array
+        Three-level nested structure indexed as
+        ``[elevation][azimuth][trial]``, where each innermost element is
+        an array of spike times.
+    timerange : list or None, optional
+        Time axis limits in milliseconds, given as ``[start, end]``. A
+        single-element list or scalar sets the upper bound with a lower
+        bound of 0. Default is ``None`` (uses 0--1000 ms).
+    savepath : str or None, optional
+        File path to save the figure. Default is ``None``.
+    '''
     ns = np.zeros(3)
     ns[0] = len(pattern3d)
     ns[1] = len(pattern3d[0])
@@ -181,7 +324,32 @@ def PatternRaster3d(pattern3d, timerange=None, savepath=None):
 
 
 def PSTH(data_obj, index, timerange, timeBinSz):
-    
+    '''Compute a peri-stimulus time histogram (PSTH).
+
+    Sums binned spike counts across all stimulus conditions (elevation,
+    azimuth, repetition) for a single neuron to produce an aggregate
+    temporal response profile.
+
+    Parameters
+    ----------
+    data_obj : load_RF_data
+        Loaded receptive-field data object whose ``pattern`` attribute
+        contains the 5-D spike pattern array.
+    index : int
+        Neuron index into ``data_obj.pattern``.
+    timerange : list
+        Two-element list ``[start, end]`` specifying the time window in
+        milliseconds.
+    timeBinSz : int
+        Histogram bin size in milliseconds.
+
+    Returns
+    -------
+    histogram : np.ndarray
+        Summed spike counts per time bin across all conditions.
+    bins : np.ndarray
+        Bin edges returned by the underlying histogram computation.
+    '''
     fr, bins = PatternToCount(data_obj.pattern[index], timerange=timerange, timeBinSz = timeBinSz, verbose=True)
     histogram = np.sum(fr, axis=(0,1,2,3))
     
@@ -189,7 +357,23 @@ def PSTH(data_obj, index, timerange, timeBinSz):
 
 
 def model_performance(data_obj, index=None, savepath=None):
-    
+    '''Plot side-by-side comparison of observed data and Kent model fits.
+
+    For each analysis time window, displays the observed mean firing-rate
+    map (top row) and the corresponding Kent distribution model prediction
+    (bottom row) as heat-map images.
+
+    Parameters
+    ----------
+    data_obj : load_RF_data
+        Loaded receptive-field data object containing ``datafits``,
+        ``modelfits``, ``windows``, ``elevations``, and ``azimuths``.
+    index : int or None, optional
+        Neuron index to plot. Default is ``None``.
+    savepath : str or None, optional
+        File path to save the figure. If ``None``, the figure is shown
+        but not saved. Default is ``None``.
+    '''
     n_windows = len(data_obj.windows)
     fig, axs = plt.subplots(2,n_windows, figsize=(n_windows*2,2.5))
     for w, window in enumerate(data_obj.windows):
@@ -237,10 +421,35 @@ def model_performance(data_obj, index=None, savepath=None):
     plt.show()
 
 
-def cluster_info_waveform(data_obj, cluster=None, 
-                          index=None, timeBinSz=1, 
+def cluster_info_waveform(data_obj, cluster=None,
+                          index=None, timeBinSz=1,
                           timerange=[0,20], savepath=None):
-    
+    '''Plot a neuron waveform template, PSTH with Gaussian fit, and probe location.
+
+    Produces a three-panel figure: (1) the normalised spike waveform on the
+    most active channel, (2) a peri-stimulus time histogram with an
+    overlaid Gaussian fit, and (3) the neuron's position on the recording
+    probe.
+
+    Parameters
+    ----------
+    data_obj : load_RF_data
+        Loaded receptive-field data object containing templates, channel
+        positions, pattern data, and spike-sorting metadata.
+    cluster : int or None, optional
+        Cluster ID used when ``spikesorting == 'kilosort4'`` to look up
+        the waveform template and channel info. Default is ``None``.
+    index : int or None, optional
+        Neuron index into the pattern array (used for PSTH computation
+        and for vision spike-sorting lookups). Default is ``None``.
+    timeBinSz : int, optional
+        PSTH histogram bin size in milliseconds. Default is ``1``.
+    timerange : list, optional
+        Two-element list ``[start, end]`` in milliseconds defining the
+        PSTH time window. Default is ``[0, 20]``.
+    savepath : str or None, optional
+        File path to save the figure. Default is ``None``.
+    '''
     if data_obj.spikesorting == 'kilosort4':
         group = data_obj.cluster.loc[cluster, 'group']
         print(group)
@@ -293,75 +502,3 @@ def cluster_info_waveform(data_obj, cluster=None,
     plt.show()
             
 
-class load_RF_data():
-    def __init__(self, dataloc, spikesorting='kilosort4'):
-        
-        assert os.path.exists(dataloc), 'Data directory not found: ' + dataloc
-        print('Loading data from: \n\t', dataloc)
-        try:
-            kilosort_loc = os.path.join(os.path.dirname(os.path.dirname(dataloc)), 'kilosort4')
-            assert os.path.exists(kilosort_loc), 'Could not find kilosort data.  Expected locatation: \n\t' + kilosort_loc
-            print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
-        except:
-            kilosort_loc = None
-            print('Some data will not be shown.')
-            
-        image_save_loc = os.path.join(os.path.dirname(dataloc), 'images')
-        assert os.path.exists(image_save_loc), 'Could not find image save location.  Expected locatation: \n\t' + image_save_loc
-        print('\nImage save location found at the expected locatation: \n\t' + image_save_loc)
-
-            
-        self.kilosort_loc = kilosort_loc
-        self.dataloc = dataloc
-        self.parenetdir = os.path.dirname(dataloc)
-        self.image_save_loc = image_save_loc
-        self.spikesorting = spikesorting
-        self.azimuths = np.arange(17)*18 - 144
-        self.elevations = np.arange(5)*20
-
-        window_subdir = []
-        file_sublist = []
-        directory_list = os.listdir(dataloc)
-        for item in directory_list:
-            itemq = os.path.join(dataloc, item)
-            if os.path.isdir(itemq): window_subdir.append(itemq)
-            if os.path.isfile(item): file_sublist.append(item)
-        print('\nImages will be saved at: \n\t', self.image_save_loc)
-        self.window_subdir = window_subdir
-        self.file_list = file_sublist
-        
-        self.pattern = np.load(os.path.join(dataloc, 'pattern.npy'), allow_pickle=True)
-        self.windows = np.load(os.path.join(dataloc, 'windows.npy'))
-        self.spont_win = np.load(os.path.join(dataloc, 'spont_win.npy'))
-        self.good_neurons = np.load(os.path.join(dataloc, 'good_neurons.npy'))
-        self.activity_df = pd.read_csv(os.path.join(dataloc, 'activity-df.csv'), sep=',', index_col=0)
-        if spikesorting == 'kilosort4':
-            self.cluster = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
-            self.templates = np.load(os.path.join(kilosort_loc, 'templates.npy'))
-            self.channelposition = np.load(os.path.join(kilosort_loc, 'channel_positions.npy'))
-        elif spikesorting == 'vision':
-            self.templates = sio.loadmat(os.path.join(self.parenetdir,'eisummary.mat'))
-            self.channelposition = np.flip(probeMap(probe='AN'), 1)
-            
-        self.aic_bic = []
-        self.datafits = []
-        self.modelfits = []
-        self.neuron_assess = []
-        self.parameters = []
-        self.sumresid = []
-        self.variances = []
-        
-        for w, window in enumerate(self.windows):
-            for subdir in window_subdir:
-                if subdir.endswith(str(w)):
-                    current_subidir = subdir
-                    break
-            print('\nLoading fit data from {0} Window, {1} ms:  {2}'.format(w, window, 
-                  os.path.basename(os.path.normpath(current_subidir))))
-            self.aic_bic.append(np.load(os.path.join(current_subidir, 'aic_bic.npy')))
-            self.datafits.append(np.load(os.path.join(current_subidir, 'datafits.npy')))
-            self.modelfits.append(np.load(os.path.join(current_subidir, 'modelfits.npy')))
-            self.neuron_assess.append(np.load(os.path.join(current_subidir, 'neuron_assess.npy')))
-            self.parameters.append(np.load(os.path.join(current_subidir, 'parameters.npy')))
-            self.sumresid.append(np.load(os.path.join(current_subidir, 'sumresid.npy')))
-            self.variances.append(np.load(os.path.join(current_subidir, 'variances.npy')))
