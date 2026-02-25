@@ -825,7 +825,7 @@ def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.0
         window = windows[w]
         ave = 'avg window {0} - {1} ms'.format(windows[w,0], windows[w,1])
         var = 'var window {0} - {1} ms'.format(windows[w,0], windows[w,1])
-        dur = np.diff(window)
+        dur = np.diff(window)[0]
 
         fr, _ = PatternToCount(pattern=pattern,timerange=list(window), timeBinSz=dur)
         fr = fr*1000/dur

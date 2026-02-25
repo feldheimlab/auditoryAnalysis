@@ -40,7 +40,7 @@ class configs():
 	'''
 	def __init__(self):
 		#stimdir, SAME FILES USED TO STIMULATE
-		self.stimdir = '/Users/ackmanadmin/Documents/test_dataset_auditory_pipeline/python/Auditory/stimgen/'
+		self.stimdir = '../../GitHub/auditory_stim_files/python/Auditory/stimgen/gen5/'
 		#sequence of data sequences, NEED TO SET
 		# data segment, location of stimulus file, distribution fit, multiplier 
 		self.stim_dict = {'seg1':['npx_gen1/fullfield_newspeakers/fullfield_newspeakers.txt', 'kent', [1, 10]],
