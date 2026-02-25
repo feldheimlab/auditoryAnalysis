@@ -180,7 +180,7 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 			plt.savefig(os.path.join(save_image_dir, 'cluster_loc_wnoise.png'), dpi=300)
 
 		if data_obj.spikesorting == 'kilosort4':
-			data_obj.cluster['group_c'] = data_obj.cluster[data_obj.class_col]
+			data_obj.cluster['group_c'] = 0
 
 			groups = np.unique(data_obj.cluster[data_obj.class_col])
 			for i, group in enumerate(groups):

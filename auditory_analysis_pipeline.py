@@ -454,7 +454,7 @@ if __name__ == '__main__':
 
 							print('\tCalculating counts for the window size', file=f)
 							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
-												  timeBinSz=np.diff(config.windows[w]))
+												  timeBinSz=np.diff(config.windows[w])[0])
 
 							for n in neuron_assess:
 								if laser is not None:            
