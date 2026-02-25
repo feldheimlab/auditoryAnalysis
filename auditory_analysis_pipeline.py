@@ -359,13 +359,30 @@ if __name__ == '__main__':
 					subset_ttls = ttls
 				else:
 					print('Using {0} TTLs to determine pattern, based on {1}/{2} multipliers: {3}'.format(nttls/nmult, m+1, nmult, mult), file=f)
-					ttlsmult = int(nttls/nmult)
-					if m == 0:
-						subset_ttls = ttls[:ttlsmult]
-					if (m+1)==nmult:
-						subset_ttls = ttls[-ttlsmult:]
+					ttls_by_mult = np.zeros(nmult)
+					if (nttls%nmult) == 0:
+						ttlsmult = int(nttls/nmult)
+						ttls_by_mult =  ttls_by_mult + ttlsmult
 					else:
-						subset_ttls = ttls[m*ttlsmult:(m+1)*ttlsmult]
+						if m == 0:
+							remainingttl = nttls
+							nstims = np.prod(stims.shape)
+							print(nstims)
+							ttls_by_mult = np.zeros(nmult)
+							for j in range(nmult):
+								remainingttl -= nstims
+								if remainingttl > 0:
+									ttls_by_mult[j] = int(nstims)
+								else:
+									ttls_by_mult[j] = int(nstims + remainingttl)
+							print(ttls_by_mult)
+							subset_ttls = ttls[:int(ttls_by_mult[m])]
+						if (m+1)==nmult:
+							subset_ttls = ttls[int(-ttls_by_mult[m]):]
+						else:
+							start = int(np.sum(ttls_by_mult[:m]))
+							end = int(np.sum(ttls_by_mult[:(m+1)]))
+							subset_ttls = ttls[start:end]
 				
 				if pattern_create:
 					#get the pattern of this dataset
@@ -518,8 +535,19 @@ if __name__ == '__main__':
 							np.save(os.path.join(winsavedir, 'aic_bic.npy'), aic_bic)
 							np.save(os.path.join(winsavedir, 'sumresid.npy'), sumresid)
 							
-							print('Kent distribution data saved to :', winsavedir, file=f)    
-				
+							print('Kent distribution data saved to :', winsavedir, file=f)
+
+							# RF neuron identification: Kent BIC < uniform BIC
+							# aic_bic columns: [uniform_aic, kent_aic, uniform_bic, kent_bic]
+							bic_uniform = aic_bic[:, 2] if aic_bic.ndim == 2 else aic_bic[:, 0, 2]
+							bic_kent = aic_bic[:, 3] if aic_bic.ndim == 2 else aic_bic[:, 0, 3]
+							delta_bic = bic_uniform - bic_kent
+							is_rf = delta_bic > 0
+							rf_indices = np.where(is_rf)[0]
+							np.save(os.path.join(winsavedir, 'is_rf.npy'), is_rf)
+							np.save(os.path.join(winsavedir, 'rf_indices.npy'), rf_indices)
+							print(f'  Window {w}: {is_rf.sum()} / {len(is_rf)} RF neurons', file=f)
+
 				elif fit == 'RandomChord':
 					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
 					if not os.path.exists(seqsavedir):

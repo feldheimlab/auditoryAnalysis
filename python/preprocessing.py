@@ -21,6 +21,15 @@ from scipy.stats import norm
 from scipy.stats import nbinom
 
 
+def ask_yes_or_no(msg: str) -> bool:
+    while True:
+        if (user := input(msg).lower()) in ('y', 'yes'):
+            return True
+        if user in ('n' ,'no'):
+            return False
+        print('Invalid input. Please try again...')
+
+
 def probeMap(probe='AN'):
 
     '''
@@ -541,6 +550,8 @@ def patternGen(asdf, ttls, stims, num_stim, ttl_trig,  window=0, force=False):
     print('TTLs found: ', n_ttls, '\nPresentations in stimfile: ', n_trial*n_stim)
     if n_ttls != n_trial*n_stim:
         print('\nNumber of stimulations do not match the number of ttls captured')
+        if ask_yes_or_no('Would you like to try to force the analysis? [Y/N]: '):
+            force = True
         assert force, 'If you would like to proceed, assumptions of some stimuli will occur. Use the force parameter to continue.'
         print('\t{} seconds of recording'.format(np.round(ttls[-1]-ttl_trig, 2)))
         print('\tFORCED APPROX OF TTLS WILL HAPPEN!')
