@@ -9,6 +9,7 @@ Date: 2026-02-10
 
 import os
 import math
+import yaml
 
 from scipy.stats import poisson
 from scipy.stats import nbinom
@@ -27,6 +28,63 @@ import pandas as pd
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from multiprocessing import Pool, cpu_count
+
+
+def _fit_neuron_kent(args_tuple):
+	"""Worker function for parallel Kent distribution fitting.
+
+	Must be at module level to be picklable by multiprocessing.
+	"""
+	n, neuron_data, azim, elev, laser = args_tuple
+	from python.distributions_fit import azimElevCoord, kent_fit, uniform_fit, aic_leastsquare, bic_leastsquare
+
+	if laser is not None:
+		results = {}
+		for l in laser:
+			if l == 0:
+				mean_data = np.mean(np.squeeze(neuron_data[:,:,0]), axis=2)
+			else:
+				mean_data = np.mean(np.squeeze(neuron_data[:,:,1]), axis=2)
+
+			xs = azimElevCoord(azim, elev, np.mean(np.squeeze(neuron_data), axis=2))
+			xyz = xs[:,:3]
+			aud = xs[:,3]
+			kentfit = kent_fit(aud, xyz, datashape=mean_data.shape, verbose=False)
+			uniformfit = uniform_fit(aud, np.arange(mean_data.size))
+
+			uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
+			kaic = aic_leastsquare(kentfit.residuals, kentfit.params)
+			ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
+			kbic = bic_leastsquare(kentfit.residuals, kentfit.params)
+
+			results[l] = {
+				'params': kentfit.params, 'var': kentfit.var,
+				'fitdist': kentfit.fitdist, 'data': kentfit.data,
+				'aic_bic': [uaic, kaic, ubic, kbic],
+				'sumresid': [uniformfit.residuals_sum, kentfit.residual_sum]
+			}
+		return n, results
+	else:
+		mean_data = np.mean(np.squeeze(neuron_data), axis=2)
+
+		xs = azimElevCoord(azim, elev, np.mean(np.squeeze(neuron_data), axis=2))
+		xyz = xs[:,:3]
+		aud = xs[:,3]
+		kentfit = kent_fit(aud, xyz, datashape=mean_data.shape, verbose=False)
+		uniformfit = uniform_fit(aud, np.arange(mean_data.size))
+
+		uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
+		kaic = aic_leastsquare(kentfit.residuals, kentfit.params)
+		ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
+		kbic = bic_leastsquare(kentfit.residuals, kentfit.params)
+
+		return n, {
+			'params': kentfit.params, 'var': kentfit.var,
+			'fitdist': kentfit.fitdist, 'data': kentfit.data,
+			'aic_bic': [uaic, kaic, ubic, kbic],
+			'sumresid': [uniformfit.residuals_sum, kentfit.residual_sum]
+		}
 
 
 def get_IDs(cluster: pd.DataFrame, 
@@ -236,8 +294,10 @@ if __name__ == '__main__':
 		default='group', 
 		help = 'column name of group tsv that indicates that classification of neuronal dataset')
 	ap.add_argument('-class', '--class', type = str,
-		default='good', 
+		default='good',
 		help = "which classifications to include: 'all', 'good', 'mua'")
+	ap.add_argument('-b', '--blinding', type=str, default='true',
+		help='Blind half the neurons: "true" (default), "false", or path to existing blinding.yml')
 	args = vars(ap.parse_args())
 
 	config = configs()
@@ -351,6 +411,50 @@ if __name__ == '__main__':
 			nmult = len(multiplier)
 			nttls = len(ttls)
 			nNeu = data_raw.asdf.shape[0]
+
+			# Blinding setup
+			blinding_enabled = False
+			blinded_indices = np.array([], dtype=int)
+			processed_indices = np.arange(nNeu)
+
+			blinding_arg = args['blinding'].lower()
+			if blinding_arg != 'false':
+				blinding_enabled = True
+				blinding_file = os.path.join(config.savedir, 'blinding.yml')
+
+				if blinding_arg != 'true':
+					blinding_file = blinding_arg
+
+				if os.path.exists(blinding_file):
+					with open(blinding_file, 'r') as bf:
+						blinding_config = yaml.safe_load(bf)
+					processed_indices = np.array(blinding_config['processed_indices'])
+					blinded_indices = np.array(blinding_config['blinded_indices'])
+					print('Loaded existing blinding from: {}'.format(blinding_file), file=f)
+				else:
+					all_indices = np.arange(nNeu)
+					np.random.shuffle(all_indices)
+					half = nNeu // 2
+					processed_indices = np.sort(all_indices[:half])
+					blinded_indices = np.sort(all_indices[half:])
+
+					blinding_data = {
+						'blinding': True,
+						'n_total': int(nNeu),
+						'n_processed': int(len(processed_indices)),
+						'n_blinded': int(len(blinded_indices)),
+						'processed_indices': processed_indices.tolist(),
+						'blinded_indices': blinded_indices.tolist(),
+						'cluster_ids_processed': data_raw.IDs[processed_indices].tolist(),
+						'cluster_ids_blinded': data_raw.IDs[blinded_indices].tolist(),
+					}
+					with open(blinding_file, 'w') as bf:
+						yaml.dump(blinding_data, bf, default_flow_style=False)
+					print('Blinding file saved to: {}'.format(blinding_file), file=f)
+
+				print('Blinding: {}/{} neurons processed, {}/{} blinded'.format(
+					len(processed_indices), nNeu, len(blinded_indices), nNeu), file=f)
+
 			nWin = config.windows.shape[0]
 
 			for m, mult in enumerate(multiplier):
@@ -411,9 +515,14 @@ if __name__ == '__main__':
 					for w in range(nWin):
 						# aud_poisson[:,w] = (activity_df['poisson win {} neg'.format(str(w))] + 
 						# 					activity_df['poisson win {} pos'.format(str(w))]).values
-						aud_qpoisson[:,w] = (activity_df['quasipoisson win {} neg'.format(str(w))] + 
+						aud_qpoisson[:,w] = (activity_df['quasipoisson win {} neg'.format(str(w))] +
 											 activity_df['quasipoisson win {} pos'.format(str(w))]).values
-					
+
+					if blinding_enabled:
+						for idx in blinded_indices:
+							aud_qpoisson[idx, :] = 0
+							aud_poisson[idx, :] = 0
+
 					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
 					if not os.path.exists(seqsavedir):
 						os.mkdir(seqsavedir)
@@ -440,6 +549,8 @@ if __name__ == '__main__':
 
 						print('Auditory neurons are determined based by quasipoisson statistics.')
 						neuron_assess = np.where(aud_qpoisson[:,w]==1)[0]
+						if blinding_enabled:
+							neuron_assess = np.intersect1d(neuron_assess, processed_indices)
 						frac2 = len(neuron_assess)/nNeu
 						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu, 
 																  np.round(frac2*100, 2)), file=f)
@@ -473,57 +584,35 @@ if __name__ == '__main__':
 							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
 												  timeBinSz=np.diff(config.windows[w])[0])
 
-							for n in neuron_assess:
-								if laser is not None:            
-									print('\nWorking on Optogenetics neuron {}'.format(n))
+							# Build argument list for parallel fitting
+							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
+
+							n_workers = min(cpu_count(), len(neuron_assess))
+							print('Fitting {} neurons in parallel with {} workers'.format(
+								len(neuron_assess), n_workers), file=f)
+
+							with Pool(n_workers) as pool:
+								results_list = pool.map(_fit_neuron_kent, fit_args)
+
+							# Unpack results into output arrays
+							for n, res in results_list:
+								if laser is not None:
 									for l in laser:
-										if l == 0:
-											mean_data = np.mean(np.squeeze(data[n,:,:,0]), axis=2)
-										else: 
-											mean_data = np.mean(np.squeeze(data[n,:,:,1]), axis=2)
-
-										xs = azimElevCoord(azim, elev, np.mean(np.squeeze(data[n]), axis=2))
-										xyz = xs[:,:3]
-										aud = xs[:,3]
-										kentfit = kent_fit(aud, xyz, datashape=mean_data.shape)
-										uniformfit = uniform_fit(aud, np.arange(mean_data.size))
-										
-										uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
-										ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
-										
-										kaic = aic_leastsquare(kentfit.residuals, kentfit.params)
-										kbic = bic_leastsquare(kentfit.residuals, kentfit.params)
-
-										parameters[n, l]  = kentfit.params
-										variances[n, l] = kentfit.var
-										modelfits[n, l] = kentfit.fitdist
-										datafits[n, l] = kentfit.data
-										aic_bic[n, l] = [uaic, kaic, ubic, kbic]
-										sumresid[n, l] = [uniformfit.residuals_sum, kentfit.residual_sum]
+										parameters[n, l] = res[l]['params']
+										variances[n, l] = res[l]['var']
+										modelfits[n, l] = res[l]['fitdist']
+										datafits[n, l] = res[l]['data']
+										aic_bic[n, l] = res[l]['aic_bic']
+										sumresid[n, l] = res[l]['sumresid']
 								else:
-									print('\nWorking on neuron {}'.format(n))
-									
-									mean_data = np.mean(np.squeeze(data[n]), axis=2)
+									parameters[n] = res['params']
+									variances[n] = res['var']
+									modelfits[n] = res['fitdist']
+									datafits[n] = res['data']
+									aic_bic[n] = res['aic_bic']
+									sumresid[n] = res['sumresid']
 
-									xs = azimElevCoord(azim, elev, np.mean(np.squeeze(data[n]), axis=2))
-									xyz = xs[:,:3]
-									aud = xs[:,3]
-									kentfit = kent_fit(aud, xyz, datashape=mean_data.shape)
-									uniformfit = uniform_fit(aud, np.arange(mean_data.size))
-									
-									uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
-									ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
-									
-									kaic = aic_leastsquare(kentfit.residuals, kentfit.params)
-									kbic = bic_leastsquare(kentfit.residuals, kentfit.params)
-
-									parameters[n] = kentfit.params
-									variances[n] = kentfit.var
-									modelfits[n] = kentfit.fitdist
-									datafits[n] = kentfit.data
-									aic_bic[n] = [uaic, kaic, ubic, kbic]
-									sumresid[n] = [uniformfit.residuals_sum, kentfit.residual_sum]
-
+							print('Fitting complete for {} neurons'.format(len(neuron_assess)), file=f)
 							winsavedir = os.path.join(seqsavedir, '{0} fit win {1}/'.format(fit, w))
 							if not os.path.exists(winsavedir):
 								os.mkdir(winsavedir)
@@ -564,6 +653,12 @@ if __name__ == '__main__':
 						data_raw.asdf, subset_ttls, nreps,
 						picked_tones, tn, data_raw.datasep[seg], nNeu
 					)
+
+					if blinding_enabled:
+						for idx in blinded_indices:
+							results['stas'][idx] = np.zeros_like(results['stas'][idx]) if results['stas'][idx] is not None else None
+							results['stasigs'][idx] = np.zeros_like(results['stasigs'][idx]) if results['stasigs'][idx] is not None else None
+							results['nSpikes'][idx] = 0
 
 					np.save(os.path.join(seqsavedir, 'stas.npy'), np.array(results['stas'], dtype=object))
 					np.save(os.path.join(seqsavedir, 'stasigs.npy'), np.array(results['stasigs'], dtype=object))

@@ -8,3 +8,6 @@ __pycache__/
 *.h5
 *.mat
 *.csv
+
+# User-specific config
+config.py
