@@ -561,7 +561,7 @@ class kent_fit():
         if self.verbose:
             print('Iterating through {} different parameter start points'.format(self.n_iter))
         for n in np.arange(n_iter):
-            if (n % 10) == 0:
+            if self.verbose and (n % 10) == 0:
                 print('\tWorking on {0} of {1} iterations'.format(n, self.n_iter))
             param = self.kentRandStart()
             error_function = lambda p: np.ravel(self.kent_dist_fit(p, xyz) - data)

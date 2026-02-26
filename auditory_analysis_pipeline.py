@@ -467,6 +467,9 @@ if __name__ == '__main__':
 					if (nttls%nmult) == 0:
 						ttlsmult = int(nttls/nmult)
 						ttls_by_mult =  ttls_by_mult + ttlsmult
+						start = int(m * ttlsmult)
+						end = int((m + 1) * ttlsmult)
+						subset_ttls = ttls[start:end]
 					else:
 						if m == 0:
 							remainingttl = nttls
@@ -587,7 +590,7 @@ if __name__ == '__main__':
 							# Build argument list for parallel fitting
 							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
 
-							n_workers = min(cpu_count(), len(neuron_assess))
+							n_workers = min(cpu_count() - 1 or 1, len(neuron_assess))
 							print('Fitting {} neurons in parallel with {} workers'.format(
 								len(neuron_assess), n_workers), file=f)
 
