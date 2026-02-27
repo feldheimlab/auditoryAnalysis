@@ -23,7 +23,7 @@ class load_RF_data():
 			print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
 
 		image_save_loc = os.path.join(os.path.dirname(dataloc), 'images')
-		if not os.path.exists:
+		if not os.path.exists(image_save_loc):
 			os.mkdir(image_save_loc)
 		assert os.path.exists(image_save_loc), 'Could not find image save location.  Expected locatation: \n\t' + image_save_loc
 		print('\nImage save location found at the expected locatation: \n\t' + image_save_loc)
