@@ -346,8 +346,11 @@ def main():
 
     # --- Output directory ---
     subdir = 'rf_neurons' if args.selection == 'rf' else 'auditory_neurons'
-    outdir = os.path.join(data.image_save_loc, subdir)
-    os.makedirs(outdir, exist_ok=True)
+    # Create a subdirectory named after the data directory (e.g. 'seg1 mult 1')
+    data_dirname = os.path.basename(os.path.normpath(args.input[0]))
+    outdir = os.path.join(data.image_save_loc, subdir + '_' + data_dirname.replace(' ', '_'))
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
     print(f'Saving plots to {outdir}')
 
     # --- Topographic map ---
