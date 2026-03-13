@@ -283,9 +283,8 @@ if __name__ == '__main__':
 	ap.add_argument('-i', '--input_directory', type = str,
 		required = True, 
 		help = 'path to the output files for processing')
-	ap.add_argument('-idict', '--input_dict', type = str,
-		required = False, #THIS WILL ULTIMATELY BE TRUE
-		help = 'path to stimulus dictionary files, indicating what the data is and how it will be processed')
+	ap.add_argument('-i2', '--input_directory2', type=str, required=False, default=None,
+		help='path to second recording (same animal, different recording)')
 	ap.add_argument('-p', '--probe', type = str,
 		default='npxl', 
 		help = 'generates the correct probe map, this can be "A", "AN", or "npxl"')
@@ -295,18 +294,18 @@ if __name__ == '__main__':
 	ap.add_argument('-f', '--fps', type = int,
 		default=30000,  
 		help = 'frames per second for data collection')
-	ap.add_argument('-plot', '--plot', type=bool, default=True,
-		help = 'save output graphs and initial assessments of the data: True (default) or False')
+	ap.add_argument('-plot', '--plot', action='store_true',
+		help = 'save output graphs and initial assessments of the data')
 	ap.add_argument('-c', '--class_col', type = str,
 		default='group', 
 		help = 'column name of group tsv that indicates that classification of neuronal dataset')
 	ap.add_argument('-class', '--class', type = str,
 		default='good',
 		help = "which classifications to include: 'all', 'good', 'mua'")
-	ap.add_argument('-i2', '--input_directory2', type=str, required=False, default=None,
-		help='path to second recording (same animal, different recording)')
-	ap.add_argument('-b', '--blinding', type=bool, default=True,
+	ap.add_argument('-b', '--blinding', type=lambda x: x.lower() not in ('false', '0', 'no'), default=True,
 		help='Blind half the neurons: True (default) or False')
+	ap.add_argument('-parallel', '--parallel', action='store_true',
+		help='Parallelize Kent distribution fitting across neurons (default: serial)')
 	args = vars(ap.parse_args())
 
 	config = configs()
@@ -743,6 +742,7 @@ if __name__ == '__main__':
 													  window_index=w_plot)
 
 					#Fitting the data, only process select neurons
+					window_summaries = {}  # collect per-window RF summary for cluster_map.csv
 					for w in range(nWin):
 
 						print('Auditory neurons are determined based by quasipoisson statistics.')
@@ -782,15 +782,31 @@ if __name__ == '__main__':
 							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
 												  timeBinSz=np.diff(config.windows[w])[0])
 
-							# Build argument list for parallel fitting
+							# Build argument list for fitting
 							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
+							n_total = len(neuron_assess)
+							print_interval = max(1, n_total // 10)
 
-							n_workers = min(cpu_count() - 1 or 1, len(neuron_assess))
-							print('Fitting {} neurons in parallel with {} workers'.format(
-								len(neuron_assess), n_workers), file=f)
-
-							with Pool(n_workers) as pool:
-								results_list = pool.map(_fit_neuron_kent, fit_args)
+							use_parallel = args.get('parallel', False)
+							if use_parallel:
+								n_workers = min(cpu_count() - 1 or 1, n_total)
+								print('Fitting {} neurons in parallel with {} workers'.format(
+									n_total, n_workers), file=f)
+								results_list = []
+								with Pool(n_workers) as pool:
+									for i, result in enumerate(pool.imap_unordered(_fit_neuron_kent, fit_args), 1):
+										results_list.append(result)
+										if i % print_interval == 0 or i == n_total:
+											print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+												i, n_total, 100*i/n_total), flush=True)
+							else:
+								print('Fitting {} neurons serially'.format(n_total), file=f)
+								results_list = []
+								for i, args_tuple in enumerate(fit_args, 1):
+									results_list.append(_fit_neuron_kent(args_tuple))
+									if i % print_interval == 0 or i == n_total:
+										print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+											i, n_total, 100*i/n_total), flush=True)
 
 							# Unpack results into output arrays
 							for n, res in results_list:
@@ -838,6 +854,38 @@ if __name__ == '__main__':
 								print(f'  Window {w}: {is_rf.sum()} / {blinding_data["n_processed"]} RF blinded neurons', file=f)
 							else:
 								print(f'  Window {w}: {is_rf.sum()} / {len(is_rf)} RF neurons', file=f)
+							win_params = parameters if parameters.ndim == 2 else parameters[:, 0, :]
+							window_summaries[w] = {
+								'is_rf': is_rf,
+								'delta_bic': delta_bic,
+								'parameters': win_params,
+								'neuron_assess': neuron_assess,
+							}
+
+					# Build and save cluster_map.csv with RF designations and preferred positions
+					if fit == 'kent' and window_summaries:
+						cluster_map_df = pd.DataFrame({'cluster_id': combined_IDs})
+						if data_raw2 is not None:
+							cluster_map_df['dataset'] = np.concatenate([
+								np.zeros(data_raw.asdf.shape[0], dtype=int),
+								np.ones(data_raw2.asdf.shape[0], dtype=int)])
+						else:
+							cluster_map_df['dataset'] = 0
+						for w in sorted(window_summaries.keys()):
+							ws = window_summaries[w]
+							cluster_map_df[f'is_auditory_win{w}'] = aud_qpoisson[:, w].astype(bool)
+							cluster_map_df[f'is_rf_win{w}'] = ws['is_rf']
+							pref_az = np.degrees(ws['parameters'][:, 3]).copy()
+							pref_el = (90 - np.degrees(ws['parameters'][:, 2])).copy()
+							fitted_mask = np.zeros(nNeu, dtype=bool)
+							fitted_mask[ws['neuron_assess']] = True
+							pref_az[~fitted_mask] = np.nan
+							pref_el[~fitted_mask] = np.nan
+							cluster_map_df[f'pref_azimuth_deg_win{w}'] = pref_az
+							cluster_map_df[f'pref_elevation_deg_win{w}'] = pref_el
+							cluster_map_df[f'delta_bic_win{w}'] = ws['delta_bic']
+						cluster_map_df.to_csv(os.path.join(seqsavedir, 'cluster_map.csv'), index=False)
+						print('Cluster map saved to :', os.path.join(seqsavedir, 'cluster_map.csv'), file=f)
 
 				elif fit == 'RandomChord':
 					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
