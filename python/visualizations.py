@@ -1,5 +1,6 @@
 import os
 import math
+from collections import Counter
 
 from .preprocessing import PatternToCount, probeMap
 
@@ -8,6 +9,44 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from .distributions_fit import gaussian_fit, chiSquaredTest
+
+
+def _offset_duplicate_channels(ch_indices, chanposition, offset_step=5.0):
+	'''Compute plot positions with offsets for neurons sharing a channel.
+
+	When multiple neurons map to the same channel, each gets a small
+	lateral (x) offset so they don't overlap on the probe plot.
+
+	Parameters
+	----------
+	ch_indices : array-like of int
+		Channel index for each neuron, indexing into ``chanposition``.
+	chanposition : np.ndarray
+		(N_channels, 2) array of channel positions [x, y].
+	offset_step : float, optional
+		Lateral offset in um between neurons on the same channel.
+		Default is 5.0.
+
+	Returns
+	-------
+	positions : np.ndarray
+		(n_neurons, 2) array of [x, y] positions with offsets applied.
+	'''
+	ch_indices = np.asarray(ch_indices, dtype=int)
+	positions = chanposition[ch_indices].copy().astype(float)
+
+	# Count how many times each channel appears and track per-channel index
+	seen = Counter()
+	for i, ch in enumerate(ch_indices):
+		count = seen[ch]
+		if count > 0:
+			# Alternate left/right: offset = step * ceil(count/2) * direction
+			direction = 1 if count % 2 == 1 else -1
+			magnitude = ((count + 1) // 2) * offset_step
+			positions[i, 0] += direction * magnitude
+		seen[ch] += 1
+
+	return positions
 
 
 class load_RF_data():
@@ -350,15 +389,15 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 			for i, group in enumerate(groups):
 				data_obj.cluster.loc[data_obj.cluster[data_obj.cluster[data_obj.class_col]==group].index, 'group_c'] = int(i)
 
-			fig, axs = plt.subplots(1,len(groups)+1, figsize = (10,5), sharey=True)    
+			fig, axs = plt.subplots(1,len(groups)+1, figsize = (10,5), sharey=True)
 			for j, group in enumerate(groups):
 				axs[j].scatter(data_obj.chanposition[:,0], data_obj.chanposition[:,1], facecolors='None', edgecolors='k')
 				clust = data_obj.cluster[data_obj.cluster[data_obj.class_col]==group].copy()
-				for index in clust.index:
-					pos = data_obj.chanposition[clust.loc[index, 'ch']]
-					color = clust.loc[index, 'group_c']
-					axs[j].scatter(pos[0], pos[1], c=color, alpha=0.25, vmin=0, vmax=2)
-					axs[j].set_ylim(-50,800)
+				ch_vals = clust['ch'].astype(int).values
+				positions = _offset_duplicate_channels(ch_vals, data_obj.chanposition)
+				colors = clust['group_c'].values
+				axs[j].scatter(positions[:, 0], positions[:, 1], c=colors, alpha=0.25, vmin=0, vmax=2)
+				axs[j].set_ylim(-50, data_obj.chanposition[:, 1].max() + 50)
 				axs[j].set_title(group)
 					
 			axs[0].set_ylabel('distanec from tip (um)')
@@ -373,6 +412,132 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 			cbar.set_ticks(np.arange(len(groups)))
 			cbar.set_ticklabels(groups)
 			plt.savefig(os.path.join(save_image_dir, 'cluster_loc_relative_to_probe.png'), dpi=300)
+
+
+def plot_overall_fr_on_probe(cluster_map, chanposition, save_image_dir):
+	'''Plot overall firing rate of good neurons mapped to probe position.
+
+	Firing rate is shown on a log10 scale (spikes/s). Uses ``span`` and
+	``depth`` columns from cluster_map for positioning.
+
+	Parameters
+	----------
+	cluster_map : pd.DataFrame
+		One row per good neuron with ``span``, ``depth``, ``fr``, ``ch`` columns.
+	chanposition : np.ndarray
+		(N,2) probe channel positions for background outline.
+	save_image_dir : str
+		Directory path where the output image will be saved.
+	'''
+	from matplotlib.colors import LogNorm
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
+
+	valid = cluster_map.dropna(subset=['span', 'depth', 'fr'])
+	fr_values = valid['fr'].values.astype(float)
+	fr_values = np.clip(fr_values, a_min=1e-2, a_max=None)  # avoid log(0)
+	positions = _offset_duplicate_channels(valid['ch'].astype(int).values, chanposition)
+	sc = ax.scatter(positions[:, 0], positions[:, 1], c=fr_values,
+					cmap='hot', edgecolors='k', linewidths=0.3, s=30,
+					norm=LogNorm(vmin=fr_values.min(), vmax=fr_values.max()))
+
+	divider = make_axes_locatable(ax)
+	cax = divider.append_axes('right', size='5%', pad=0.05)
+	cbar = fig.colorbar(sc, cax=cax, orientation='vertical')
+	cbar.set_label('Firing Rate (log spikes/s)')
+
+	ax.set_ylabel('Distance from tip (um)')
+	ax.set_xlabel('Span (um)')
+	ax.set_title('Overall Firing Rate on Probe')
+	plt.tight_layout()
+	plt.savefig(os.path.join(save_image_dir, 'overall_fr_on_probe.png'), dpi=300)
+	plt.close()
+
+
+def plot_rf_azimuth_on_probe(cluster_map, chanposition, save_image_dir, window_index=0):
+	'''Plot RF neurons on the probe, coloured by fitted azimuthal preference.
+
+	Only neurons with ``is_rf`` == True in cluster_map are plotted.
+	Colour encodes the ``azimuth_deg`` column.
+
+	Parameters
+	----------
+	cluster_map : pd.DataFrame
+		One row per good neuron with ``span``, ``depth``, ``ch``,
+		``is_rf``, and ``azimuth_deg`` columns.
+	chanposition : np.ndarray
+		(N,2) probe channel positions for background outline.
+	save_image_dir : str
+		Directory path where the output image will be saved.
+	window_index : int, optional
+		Window index for the filename. Default is 0.
+	'''
+	rf = cluster_map[cluster_map.get('is_rf', pd.Series(dtype=bool)) == True]
+	if len(rf) == 0 or 'azimuth_deg' not in cluster_map.columns:
+		return
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
+
+	positions = _offset_duplicate_channels(rf['ch'].astype(int).values, chanposition)
+	sc = ax.scatter(positions[:, 0], positions[:, 1], c=rf['azimuth_deg'].values,
+					cmap='hsv', edgecolors='k', linewidths=0.3, s=30)
+
+	divider = make_axes_locatable(ax)
+	cax = divider.append_axes('right', size='5%', pad=0.05)
+	cbar = fig.colorbar(sc, cax=cax, orientation='vertical')
+	cbar.set_label('Azimuth (deg)')
+
+	ax.set_ylabel('Distance from tip (um)')
+	ax.set_xlabel('Span (um)')
+	ax.set_title('RF Neurons — Azimuth on Probe (win {})'.format(window_index))
+	plt.tight_layout()
+	plt.savefig(os.path.join(save_image_dir, 'rf_azimuth_on_probe_win{}.png'.format(window_index)), dpi=300)
+	plt.close()
+
+
+def plot_windowed_fr_on_probe(cluster_map, chanposition, save_image_dir, window_index=0):
+	'''Plot stimulus-evoked windowed firing rate of each neuron on the probe.
+
+	Uses the ``windowed_fr`` column from cluster_map for colouring.
+
+	Parameters
+	----------
+	cluster_map : pd.DataFrame
+		One row per good neuron with ``span``, ``depth``, ``ch``,
+		and ``windowed_fr`` columns.
+	chanposition : np.ndarray
+		(N,2) probe channel positions for background outline.
+	save_image_dir : str
+		Directory path where the output image will be saved.
+	window_index : int, optional
+		Index label for the window used in the filename. Default is 0.
+	'''
+	col = 'windowed_fr_win{}'.format(window_index)
+	if col not in cluster_map.columns:
+		return
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
+
+	valid = cluster_map.dropna(subset=['ch', col])
+	positions = _offset_duplicate_channels(valid['ch'].astype(int).values, chanposition)
+	sc = ax.scatter(positions[:, 0], positions[:, 1], c=valid[col].values,
+					cmap='hot', edgecolors='k', linewidths=0.3, s=30)
+
+	divider = make_axes_locatable(ax)
+	cax = divider.append_axes('right', size='5%', pad=0.05)
+	cbar = fig.colorbar(sc, cax=cax, orientation='vertical')
+	cbar.set_label('Mean Spike Count')
+
+	win = cluster_map.attrs.get('window_{}'.format(window_index), [0, 0])
+	ax.set_ylabel('Distance from tip (um)')
+	ax.set_xlabel('Span (um)')
+	ax.set_title('Windowed FR (win {}) on Probe'.format(window_index))
+	plt.tight_layout()
+	plt.savefig(os.path.join(save_image_dir, 'windowed_fr_on_probe_win{}.png'.format(window_index)), dpi=300)
+	plt.close()
 
 
 def PatternRaster3d(pattern3d, timerange=None, savepath=None):
@@ -445,6 +610,13 @@ def PatternRaster3d(pattern3d, timerange=None, savepath=None):
 				axs[x][y].set_xticks([])
 				axs[x][y].set_xlim([mintime, maxtime])
 				axs[x][y].set_ylim([-1, ns[2]+1])
+				if y == 0:
+					if (x % 2)==0:
+						if x != (ns[0]-1):
+							axs[x][y].set_ylabel(80-(x*20))
+				if x == int(ns[0]-1):
+					if (y % 4)==0:
+						axs[x][y].set_xlabel(y*18 - 144)
 		axs[int(ns[0]-1)][0].set_yticks([0, ns[2]])
 		axs[int(ns[0]-1)][0].set_xticks([mintime, maxtime])
 		axs[int(ns[0]-1)][0].set_xticklabels([0, dur])
@@ -477,6 +649,8 @@ def PatternRaster3d(pattern3d, timerange=None, savepath=None):
 			axs[y].set_xticks([])
 			axs[y].set_xlim([mintime, maxtime])
 			axs[y].set_ylim([-1, ns[2]+1])
+			if (y % 4)==0:
+				axs[x][y].set_ylabel(y*18 - 144)
 		axs[0].set_yticks([0, ns[2]])
 		axs[0].set_xticks([mintime, maxtime])
 		axs[0].set_xticklabels([0, dur])
