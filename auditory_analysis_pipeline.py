@@ -16,9 +16,9 @@ from scipy.stats import nbinom
 import scipy.io as sio
 
 # custom functions
-from python.preprocessing import probeMap, readStimFile, getTTLseg, patternGen, PatternToCount, sigAudFRCompareSpont
+from python.preprocessing import probeMap, probeMapFromMeta, readStimFile, getTTLseg, patternGen, PatternToCount, sigAudFRCompareSpont
 from python.distributions_fit import azimElevCoord, kent_fit, uniform_fit, aic_leastsquare, bic_leastsquare
-from python.visualizations import plot_neurons_relative_to_probe
+from python.visualizations import plot_neurons_relative_to_probe, plot_overall_fr_on_probe, plot_windowed_fr_on_probe
 from python.random_chord_analysis import DoRandomChordAnalysis
 from config import configs
 from python.hdf5manager import hdf5manager as h5
@@ -246,7 +246,14 @@ class data_load():
 
 			#load channel maps
 			self.chanmap = np.load(os.path.join(dataloc,'channel_map.npy')) #map of the probe
-			self.chanposition = np.load(os.path.join(dataloc,'channel_positions.npy'))
+			# Try to extract probe map from SpikeGLX .meta file, fall back to hardcoded probeMap
+			import glob
+			meta_files = glob.glob(os.path.join(parentdir, '*.ap.meta'))
+			if meta_files:
+				self.chanposition = probeMapFromMeta(meta_files[0])
+				print('Probe map extracted from meta file: {}'.format(meta_files[0]), file=f)
+			else:
+				self.chanposition = np.load(os.path.join(dataloc,'channel_positions.npy'))
 			try:
 				self.ttl_times = np.load(os.path.join(dataloc, 'ttlTimes.npy'))
 			except: 
@@ -276,9 +283,8 @@ if __name__ == '__main__':
 	ap.add_argument('-i', '--input_directory', type = str,
 		required = True, 
 		help = 'path to the output files for processing')
-	ap.add_argument('-idict', '--input_dict', type = str,
-		required = False, #THIS WILL ULTIMATELY BE TRUE
-		help = 'path to stimulus dictionary files, indicating what the data is and how it will be processed')
+	ap.add_argument('-i2', '--input_directory2', type=str, required=False, default=None,
+		help='path to second recording (same animal, different recording)')
 	ap.add_argument('-p', '--probe', type = str,
 		default='npxl', 
 		help = 'generates the correct probe map, this can be "A", "AN", or "npxl"')
@@ -289,15 +295,17 @@ if __name__ == '__main__':
 		default=30000,  
 		help = 'frames per second for data collection')
 	ap.add_argument('-plot', '--plot', action='store_true',
-		help = 'if flagged, it will save output graphs and initial assessments of the data')
+		help = 'save output graphs and initial assessments of the data')
 	ap.add_argument('-c', '--class_col', type = str,
 		default='group', 
 		help = 'column name of group tsv that indicates that classification of neuronal dataset')
 	ap.add_argument('-class', '--class', type = str,
 		default='good',
 		help = "which classifications to include: 'all', 'good', 'mua'")
-	ap.add_argument('-b', '--blinding', type=str, default='true',
-		help='Blind half the neurons: "true" (default), "false", or path to existing blinding.yml')
+	ap.add_argument('-b', '--blinding', type=lambda x: x.lower() not in ('false', '0', 'no'), default=True,
+		help='Blind half the neurons: True (default) or False')
+	ap.add_argument('-parallel', '--parallel', action='store_true',
+		help='Parallelize Kent distribution fitting across neurons (default: serial)')
 	args = vars(ap.parse_args())
 
 	config = configs()
@@ -309,7 +317,46 @@ if __name__ == '__main__':
 	assert os.path.exists(dataloc), 'Could not find: {}'.format(dataloc)
 	config.dataloc = dataloc
 	config.parentdir = os.path.dirname(dataloc)
-	config.savedir = os.path.join(config.parentdir, 'results')
+
+	dataloc2 = args['input_directory2']
+	if dataloc2 is not None:
+		if dataloc2.endswith('/'):
+			dataloc2 = dataloc2[:-1]
+		assert os.path.exists(dataloc2), 'Could not find: {}'.format(dataloc2)
+		# Results go to common parent, named with the common experimental date
+		parent0 = os.path.dirname(dataloc)
+		parent1 = os.path.dirname(dataloc2)
+		common_parent = os.path.commonpath([parent0, parent1])
+		# Extract common date prefix from recording directory names (e.g. '2026-03-05')
+		import re
+		dir0 = os.path.basename(os.path.normpath(dataloc))
+		dir1 = os.path.basename(os.path.normpath(dataloc2))
+		# Walk up to find the recording date directories (names like 2026-03-05-0)
+		for part in dataloc.split(os.sep):
+			if re.match(r'\d{4}-\d{2}-\d{2}-\d+', part):
+				dir0 = part
+				break
+		for part in dataloc2.split(os.sep):
+			if re.match(r'\d{4}-\d{2}-\d{2}-\d+', part):
+				dir1 = part
+				break
+		# Find common date prefix (e.g. '2026-03-05' from '2026-03-05-0' and '2026-03-05-1')
+		date_match0 = re.match(r'(\d{4}-\d{2}-\d{2})', dir0)
+		date_match1 = re.match(r'(\d{4}-\d{2}-\d{2})', dir1)
+		if date_match0 and date_match1 and date_match0.group(1) == date_match1.group(1):
+			results_name = 'results_{}'.format(date_match0.group(1))
+		else:
+			results_name = 'results'
+		config.savedir = os.path.join(common_parent, results_name)
+	else:
+		import re
+		results_name = 'results'
+		for part in dataloc.split(os.sep):
+			date_match = re.match(r'(\d{4}-\d{2}-\d{2})', part)
+			if date_match:
+				results_name = 'results_{}'.format(date_match.group(1))
+				break
+		config.savedir = os.path.join(config.parentdir, results_name)
 	if not os.path.exists(config.savedir):
 		os.mkdir(config.savedir)
 
@@ -329,7 +376,7 @@ if __name__ == '__main__':
 	assert config.spikesorting in ['kilosort4', 'vision'], 'Choose a spike sorting program compatible with this pipeline: "kilsort4" or "vision"'
 
 	# HARDCODDED PARAMETERS
-	
+
 	assert os.path.exists(config.stimdir), 'Stimulus directory was not found.'
 	textoutput = os.path.join(config.savedir, 'data_processing_log.txt')
 	with open(textoutput, 'w') as f:
@@ -341,9 +388,78 @@ if __name__ == '__main__':
 
 		data_raw = data_load(dataloc=config.dataloc, spikesorting=config.spikesorting, \
 							class_col=config.class_col, group=config.group, rate=config.rate, f=f)
-		
+
+		data_raw2 = None
+		if dataloc2 is not None:
+			print('\nLoading second recording: ', dataloc2, file=f)
+			data_raw2 = data_load(dataloc=dataloc2, spikesorting=config.spikesorting, \
+								class_col=config.class_col, group=config.group, rate=config.rate, f=f)
+
+			# Concatenate neurons from both recordings
+			nNeu_rec0 = data_raw.asdf.shape[0]
+			combined_asdf = np.concatenate([data_raw.asdf, data_raw2.asdf])
+
+			# Offset recording 2 IDs to avoid collisions
+			id_offset = int(data_raw.IDs.max()) + 1
+			combined_IDs = np.concatenate([data_raw.IDs, data_raw2.IDs + id_offset])
+
+			# Merge cluster DataFrames with same ID offset and dataset label
+			if config.spikesorting == 'kilosort4':
+				cluster0 = data_raw.cluster.copy()
+				cluster0['dataset'] = 0
+				cluster2 = data_raw2.cluster.copy()
+				cluster2['cluster_id'] = cluster2['cluster_id'] + id_offset
+				cluster2['dataset'] = 1
+				combined_cluster = pd.concat([cluster0, cluster2], ignore_index=True)
+
+			# Combine probe maps: reorder columns to (lateral, depth) so scatter
+			# plots show span on x-axis and distance from tip on y-axis.
+			# Meta files already encode real anatomical depth positions,
+			# so no additional offset is needed.
+			pm0 = data_raw.chanposition[:, [1, 0]].copy()   # swap to (lateral, depth)
+			pm1 = data_raw2.chanposition[:, [1, 0]].copy()  # swap to (lateral, depth)
+			combined_chanposition = np.concatenate([pm0, pm1], axis=0)
+
+			# Offset rec1 channel indices in cluster so they index into combined_chanposition
+			ch_offset = pm0.shape[0]
+			combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] = \
+				combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] + ch_offset
+
+			print('Recording 0: {} neurons, Recording 1: {} neurons, Combined: {}'.format(
+				nNeu_rec0, data_raw2.asdf.shape[0], len(combined_IDs)), file=f)
+			print('Combined probe map: {} channels, depth range {:.0f}-{:.0f} um'.format(
+				combined_chanposition.shape[0], combined_chanposition[:, 1].min(),
+				combined_chanposition[:, 1].max()), file=f)
+		else:
+			nNeu_rec0 = None
+			combined_asdf = data_raw.asdf
+			combined_IDs = data_raw.IDs
+			combined_chanposition = data_raw.chanposition[:, [1, 0]].copy()  # swap to (lateral, depth)
+			if config.spikesorting == 'kilosort4':
+				combined_cluster = data_raw.cluster.copy()
+				combined_cluster['dataset'] = 0
+
+		# Save probe map to results folder
+		np.save(os.path.join(config.savedir, 'probe_map.npy'), combined_chanposition)
+		combined_cluster.to_csv(os.path.join(config.savedir, 'cluster_info.csv'), index=False)
+		print('Probe map saved to: {}'.format(os.path.join(config.savedir, 'probe_map.npy')), file=f)
+		print('Cluster info saved to: {}'.format(os.path.join(config.savedir, 'cluster_info.csv')), file=f)
+
 		if plot:
-			plot_neurons_relative_to_probe(data_obj=data_raw, save_image_dir=config.imagedir)
+			if data_raw2 is not None:
+				# Build a combined object for the probe plots
+				class _combined_data:
+					pass
+				combined_data = _combined_data()
+				combined_data.spikesorting = config.spikesorting
+				combined_data.class_col = config.class_col
+				combined_data.chanposition = combined_chanposition
+				combined_data.cluster = combined_cluster.copy()
+				plot_neurons_relative_to_probe(data_obj=combined_data, save_image_dir=config.imagedir)
+				plot_overall_fr_on_probe(data_obj=combined_data, save_image_dir=config.imagedir, good_neuron_ids=combined_IDs)
+			else:
+				plot_neurons_relative_to_probe(data_obj=data_raw, save_image_dir=config.imagedir)
+				plot_overall_fr_on_probe(data_obj=data_raw, save_image_dir=config.imagedir, good_neuron_ids=combined_IDs)
 
 		print('\nConfig parameters used for this data analysis', file=f)
 		config.write_attributes(f)
@@ -410,26 +526,22 @@ if __name__ == '__main__':
 			ttls = getTTLseg(seg=seg, ttls=data_raw.ttl_times, datasets=data_raw.datasep)
 			nmult = len(multiplier)
 			nttls = len(ttls)
-			nNeu = data_raw.asdf.shape[0]
+			nNeu = combined_asdf.shape[0]
 
 			# Blinding setup
-			blinding_enabled = False
+			blinding_arg = args['blinding']
+			blinding_enabled = blinding_arg
 			blinded_indices = np.array([], dtype=int)
 			processed_indices = np.arange(nNeu)
 
-			blinding_arg = args['blinding'].lower()
-			if blinding_arg != 'false':
-				blinding_enabled = True
+			if blinding_enabled:
 				blinding_file = os.path.join(config.savedir, 'blinding.yml')
-
-				if blinding_arg != 'true':
-					blinding_file = blinding_arg
 
 				if os.path.exists(blinding_file):
 					with open(blinding_file, 'r') as bf:
-						blinding_config = yaml.safe_load(bf)
-					processed_indices = np.array(blinding_config['processed_indices'])
-					blinded_indices = np.array(blinding_config['blinded_indices'])
+						blinding_data = yaml.safe_load(bf)
+					processed_indices = np.array(blinding_data['processed_indices'])
+					blinded_indices = np.array(blinding_data['blinded_indices'])
 					print('Loaded existing blinding from: {}'.format(blinding_file), file=f)
 				else:
 					all_indices = np.arange(nNeu)
@@ -437,7 +549,7 @@ if __name__ == '__main__':
 					half = nNeu // 2
 					processed_indices = np.sort(all_indices[:half])
 					blinded_indices = np.sort(all_indices[half:])
-
+					
 					blinding_data = {
 						'blinding': True,
 						'n_total': int(nNeu),
@@ -445,8 +557,8 @@ if __name__ == '__main__':
 						'n_blinded': int(len(blinded_indices)),
 						'processed_indices': processed_indices.tolist(),
 						'blinded_indices': blinded_indices.tolist(),
-						'cluster_ids_processed': data_raw.IDs[processed_indices].tolist(),
-						'cluster_ids_blinded': data_raw.IDs[blinded_indices].tolist(),
+						'cluster_ids_processed': combined_IDs[processed_indices].tolist(),
+						'cluster_ids_blinded': combined_IDs[blinded_indices].tolist(),
 					}
 					with open(blinding_file, 'w') as bf:
 						yaml.dump(blinding_data, bf, default_flow_style=False)
@@ -493,8 +605,71 @@ if __name__ == '__main__':
 				
 				if pattern_create:
 					#get the pattern of this dataset
-					pattern, ttlarray = patternGen(data_raw.asdf, subset_ttls, stims, num_stim, 
-												   data_raw.datasep[seg],  window=config.timewindow, force=False)
+					if data_raw2 is not None:
+						# Generate patterns per-recording using each recording's own TTLs/datasep
+						ttls_0 = getTTLseg(seg=seg, ttls=data_raw.ttl_times, datasets=data_raw.datasep)
+						if nmult > 1:
+							nttls_0 = len(ttls_0)
+							if (nttls_0 % nmult) == 0:
+								ttlsmult_0 = int(nttls_0 / nmult)
+								subset_ttls_0 = ttls_0[int(m * ttlsmult_0):int((m + 1) * ttlsmult_0)]
+							else:
+								nstims_0 = np.prod(stims.shape)
+								remainingttl_0 = nttls_0
+								ttls_by_mult_0 = np.zeros(nmult)
+								for j in range(nmult):
+									remainingttl_0 -= nstims_0
+									if remainingttl_0 > 0:
+										ttls_by_mult_0[j] = int(nstims_0)
+									else:
+										ttls_by_mult_0[j] = int(nstims_0 + remainingttl_0)
+								if m == 0:
+									subset_ttls_0 = ttls_0[:int(ttls_by_mult_0[m])]
+								elif (m + 1) == nmult:
+									subset_ttls_0 = ttls_0[int(-ttls_by_mult_0[m]):]
+								else:
+									start_0 = int(np.sum(ttls_by_mult_0[:m]))
+									end_0 = int(np.sum(ttls_by_mult_0[:(m + 1)]))
+									subset_ttls_0 = ttls_0[start_0:end_0]
+						else:
+							subset_ttls_0 = ttls_0
+						pattern_0, ttlarray = patternGen(data_raw.asdf, subset_ttls_0, stims, num_stim,
+														 data_raw.datasep[seg], window=config.timewindow, force=False)
+
+						ttls_1 = getTTLseg(seg=seg, ttls=data_raw2.ttl_times, datasets=data_raw2.datasep)
+						if nmult > 1:
+							nttls_1 = len(ttls_1)
+							if (nttls_1 % nmult) == 0:
+								ttlsmult_1 = int(nttls_1 / nmult)
+								subset_ttls_1 = ttls_1[int(m * ttlsmult_1):int((m + 1) * ttlsmult_1)]
+							else:
+								nstims_1 = np.prod(stims.shape)
+								remainingttl_1 = nttls_1
+								ttls_by_mult_1 = np.zeros(nmult)
+								for j in range(nmult):
+									remainingttl_1 -= nstims_1
+									if remainingttl_1 > 0:
+										ttls_by_mult_1[j] = int(nstims_1)
+									else:
+										ttls_by_mult_1[j] = int(nstims_1 + remainingttl_1)
+								if m == 0:
+									subset_ttls_1 = ttls_1[:int(ttls_by_mult_1[m])]
+								elif (m + 1) == nmult:
+									subset_ttls_1 = ttls_1[int(-ttls_by_mult_1[m]):]
+								else:
+									start_1 = int(np.sum(ttls_by_mult_1[:m]))
+									end_1 = int(np.sum(ttls_by_mult_1[:(m + 1)]))
+									subset_ttls_1 = ttls_1[start_1:end_1]
+						else:
+							subset_ttls_1 = ttls_1
+						pattern_1, _ = patternGen(data_raw2.asdf, subset_ttls_1, stims, num_stim,
+												  data_raw2.datasep[seg], window=config.timewindow, force=False)
+
+						# Concatenate along neuron axis
+						pattern = np.concatenate([pattern_0, pattern_1], axis=0)
+					else:
+						pattern, ttlarray = patternGen(data_raw.asdf, subset_ttls, stims, num_stim,
+													   data_raw.datasep[seg],  window=config.timewindow, force=False)
 
 					print('\nNumber of windows assessed: ', config.windows.shape[0], file=f)
 					for w, win in enumerate(config.windows): #in ms
@@ -510,7 +685,13 @@ if __name__ == '__main__':
 					# 													boolPlot = False, boolReturnRate=True)
 					# activity_df[activity_df2.columns] = activity_df2.values
 
-					activity_df['cluster'] = data_raw.IDs
+					activity_df['cluster'] = combined_IDs
+					if data_raw2 is not None:
+						activity_df['dataset'] = np.concatenate([
+							np.zeros(data_raw.asdf.shape[0], dtype=int),
+							np.ones(data_raw2.asdf.shape[0], dtype=int)])
+					else:
+						activity_df['dataset'] = 0
 
 					aud_poisson =  np.array([[None] * nWin] * nNeu)
 					aud_qpoisson =  np.array([[None] * nWin] * nNeu)
@@ -536,7 +717,7 @@ if __name__ == '__main__':
 							except:
 								print('')	
 					np.save(os.path.join(seqsavedir, 'pattern.npy'), pattern)
-					np.save(os.path.join(seqsavedir, 'good_neurons.npy'), data_raw.IDs)   
+					np.save(os.path.join(seqsavedir, 'good_neurons.npy'), combined_IDs)
 					np.save(os.path.join(seqsavedir, 'aud_neurons_poisson.npy'), aud_poisson) 
 					np.save(os.path.join(seqsavedir, 'windows.npy'), config.windows)
 					np.save(os.path.join(seqsavedir, 'spont_win.npy'), config.spont_win)
@@ -547,7 +728,21 @@ if __name__ == '__main__':
 					
 					print('Preprocessing data saved to :', seqsavedir, file=f)
 
+					if plot:
+						plot_img_dir = os.path.join(seqsavedir, 'images')
+						if not os.path.exists(plot_img_dir):
+							os.mkdir(plot_img_dir)
+						if data_raw2 is not None:
+							plot_windowed_data = combined_data
+						else:
+							plot_windowed_data = data_raw
+						for w_plot, win_plot in enumerate(config.windows):
+							plot_windowed_fr_on_probe(data_obj=plot_windowed_data, pattern=pattern,
+													  window=win_plot, save_image_dir=plot_img_dir,
+													  window_index=w_plot)
+
 					#Fitting the data, only process select neurons
+					window_summaries = {}  # collect per-window RF summary for cluster_map.csv
 					for w in range(nWin):
 
 						print('Auditory neurons are determined based by quasipoisson statistics.')
@@ -587,15 +782,31 @@ if __name__ == '__main__':
 							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
 												  timeBinSz=np.diff(config.windows[w])[0])
 
-							# Build argument list for parallel fitting
+							# Build argument list for fitting
 							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
+							n_total = len(neuron_assess)
+							print_interval = max(1, n_total // 10)
 
-							n_workers = min(cpu_count() - 1 or 1, len(neuron_assess))
-							print('Fitting {} neurons in parallel with {} workers'.format(
-								len(neuron_assess), n_workers), file=f)
-
-							with Pool(n_workers) as pool:
-								results_list = pool.map(_fit_neuron_kent, fit_args)
+							use_parallel = args.get('parallel', False)
+							if use_parallel:
+								n_workers = min(cpu_count() - 1 or 1, n_total)
+								print('Fitting {} neurons in parallel with {} workers'.format(
+									n_total, n_workers), file=f)
+								results_list = []
+								with Pool(n_workers) as pool:
+									for i, result in enumerate(pool.imap_unordered(_fit_neuron_kent, fit_args), 1):
+										results_list.append(result)
+										if i % print_interval == 0 or i == n_total:
+											print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+												i, n_total, 100*i/n_total), flush=True)
+							else:
+								print('Fitting {} neurons serially'.format(n_total), file=f)
+								results_list = []
+								for i, args_tuple in enumerate(fit_args, 1):
+									results_list.append(_fit_neuron_kent(args_tuple))
+									if i % print_interval == 0 or i == n_total:
+										print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+											i, n_total, 100*i/n_total), flush=True)
 
 							# Unpack results into output arrays
 							for n, res in results_list:
@@ -638,7 +849,43 @@ if __name__ == '__main__':
 							rf_indices = np.where(is_rf)[0]
 							np.save(os.path.join(winsavedir, 'is_rf.npy'), is_rf)
 							np.save(os.path.join(winsavedir, 'rf_indices.npy'), rf_indices)
-							print(f'  Window {w}: {is_rf.sum()} / {len(is_rf)} RF neurons', file=f)
+							
+							if blinding_enabled:
+								print(f'  Window {w}: {is_rf.sum()} / {blinding_data["n_processed"]} RF blinded neurons', file=f)
+							else:
+								print(f'  Window {w}: {is_rf.sum()} / {len(is_rf)} RF neurons', file=f)
+							win_params = parameters if parameters.ndim == 2 else parameters[:, 0, :]
+							window_summaries[w] = {
+								'is_rf': is_rf,
+								'delta_bic': delta_bic,
+								'parameters': win_params,
+								'neuron_assess': neuron_assess,
+							}
+
+					# Build and save cluster_map.csv with RF designations and preferred positions
+					if fit == 'kent' and window_summaries:
+						cluster_map_df = pd.DataFrame({'cluster_id': combined_IDs})
+						if data_raw2 is not None:
+							cluster_map_df['dataset'] = np.concatenate([
+								np.zeros(data_raw.asdf.shape[0], dtype=int),
+								np.ones(data_raw2.asdf.shape[0], dtype=int)])
+						else:
+							cluster_map_df['dataset'] = 0
+						for w in sorted(window_summaries.keys()):
+							ws = window_summaries[w]
+							cluster_map_df[f'is_auditory_win{w}'] = aud_qpoisson[:, w].astype(bool)
+							cluster_map_df[f'is_rf_win{w}'] = ws['is_rf']
+							pref_az = np.degrees(ws['parameters'][:, 3]).copy()
+							pref_el = (90 - np.degrees(ws['parameters'][:, 2])).copy()
+							fitted_mask = np.zeros(nNeu, dtype=bool)
+							fitted_mask[ws['neuron_assess']] = True
+							pref_az[~fitted_mask] = np.nan
+							pref_el[~fitted_mask] = np.nan
+							cluster_map_df[f'pref_azimuth_deg_win{w}'] = pref_az
+							cluster_map_df[f'pref_elevation_deg_win{w}'] = pref_el
+							cluster_map_df[f'delta_bic_win{w}'] = ws['delta_bic']
+						cluster_map_df.to_csv(os.path.join(seqsavedir, 'cluster_map.csv'), index=False)
+						print('Cluster map saved to :', os.path.join(seqsavedir, 'cluster_map.csv'), file=f)
 
 				elif fit == 'RandomChord':
 					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
@@ -652,10 +899,30 @@ if __name__ == '__main__':
 
 					nreps = mult
 					print('Running RandomChord STA analysis (nreps={}, tn={})'.format(nreps, tn), file=f)
-					results = DoRandomChordAnalysis(
-						data_raw.asdf, subset_ttls, nreps,
-						picked_tones, tn, data_raw.datasep[seg], nNeu
-					)
+					if data_raw2 is not None:
+						# Run RandomChord per-recording with each recording's own TTLs/datasep
+						ttls_0 = getTTLseg(seg=seg, ttls=data_raw.ttl_times, datasets=data_raw.datasep)
+						results_0 = DoRandomChordAnalysis(
+							data_raw.asdf, ttls_0, nreps,
+							picked_tones, tn, data_raw.datasep[seg], data_raw.asdf.shape[0]
+						)
+						ttls_1 = getTTLseg(seg=seg, ttls=data_raw2.ttl_times, datasets=data_raw2.datasep)
+						results_1 = DoRandomChordAnalysis(
+							data_raw2.asdf, ttls_1, nreps,
+							picked_tones, tn, data_raw2.datasep[seg], data_raw2.asdf.shape[0]
+						)
+						# Concatenate results
+						results = {
+							'stas': list(results_0['stas']) + list(results_1['stas']),
+							'stasigs': list(results_0['stasigs']) + list(results_1['stasigs']),
+							'nSpikes': np.concatenate([results_0['nSpikes'], results_1['nSpikes']]),
+							'meanpic': (results_0['meanpic'] + results_1['meanpic']) / 2,
+						}
+					else:
+						results = DoRandomChordAnalysis(
+							data_raw.asdf, subset_ttls, nreps,
+							picked_tones, tn, data_raw.datasep[seg], nNeu
+						)
 
 					if blinding_enabled:
 						for idx in blinded_indices:

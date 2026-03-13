@@ -30,6 +30,53 @@ def ask_yes_or_no(msg: str) -> bool:
         print('Invalid input. Please try again...')
 
 
+def probeMapFromMeta(meta_path):
+	'''
+	Extract probe geometry from a SpikeGLX .ap.meta file.
+
+	Parses the ~snsGeomMap field to get per-channel (shank, x, y) coordinates,
+	then returns a probe_map in the same format as probeMap():
+	  column 0 = y position (depth along shank)
+	  column 1 = shank * shank_spacing + x (lateral position)
+
+	Arguments:
+		meta_path: path to a .ap.meta file
+
+	Returns:
+		probe_map: (N, 2) numpy array of channel positions, same format as probeMap()
+	'''
+	meta = {}
+	with open(meta_path, 'r') as f:
+		for line in f:
+			line = line.strip()
+			if '=' in line:
+				key, val = line.split('=', 1)
+				meta[key] = val
+
+	if '~snsGeomMap' not in meta:
+		raise ValueError(f"No ~snsGeomMap found in {meta_path}")
+
+	geom_str = meta['~snsGeomMap']
+	entries = []
+	for token in geom_str.split('(')[1:]:
+		token = token.rstrip(')')
+		if token:
+			entries.append(token)
+
+	header = entries[0].split(',')
+	shank_spacing = float(header[2])
+
+	channels = []
+	for entry in entries[1:]:
+		parts = entry.split(':')
+		shank = float(parts[0])
+		x = float(parts[1])
+		y = float(parts[2])
+		channels.append([y, shank * shank_spacing + x])
+
+	return np.array(channels)
+
+
 def probeMap(probe='AN'):
 
     '''
