@@ -35,15 +35,15 @@ def probeMapFromMeta(meta_path):
 	Extract probe geometry from a SpikeGLX .ap.meta file.
 
 	Parses the ~snsGeomMap field to get per-channel (shank, x, y) coordinates,
-	then returns a probe_map in the same format as probeMap():
-	  column 0 = y position (depth along shank)
-	  column 1 = shank * shank_spacing + x (lateral position)
+	then returns positions in the same format as channel_positions.npy:
+	  column 0 = lateral position / span (um)  [shank * shank_spacing + x]
+	  column 1 = depth from tip (um)            [y]
 
 	Arguments:
 		meta_path: path to a .ap.meta file
 
 	Returns:
-		probe_map: (N, 2) numpy array of channel positions, same format as probeMap()
+		probe_map: (N, 2) numpy array of channel positions [span, depth]
 	'''
 	meta = {}
 	with open(meta_path, 'r') as f:
@@ -75,7 +75,7 @@ def probeMapFromMeta(meta_path):
 		shank = float(parts[0])
 		x = float(parts[1])
 		y = float(parts[2])
-		channels.append([y, shank * shank_spacing + x])
+		channels.append([shank * shank_spacing + x, y])
 
 	return np.array(channels)
 

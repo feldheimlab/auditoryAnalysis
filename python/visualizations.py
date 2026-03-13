@@ -400,11 +400,13 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 				axs[j].set_ylim(-50, data_obj.chanposition[:, 1].max() + 50)
 				axs[j].set_title(group)
 					
-			axs[0].set_ylabel('distanec from tip (um)')
+			axs[0].set_ylabel('distance from tip (um)')
 			axs[1].set_xlabel('span (um)')
 			axs[-1].set_xlabel('FR')
 
-			im1 = axs[-1].scatter(data_obj.cluster['fr'], data_obj.cluster['depth'],  c=data_obj.cluster['group_c'], alpha = 0.25, vmax = 2)
+			ch_vals_all = data_obj.cluster['ch'].astype(int).values
+			y_from_probe = data_obj.chanposition[ch_vals_all, 1]
+			im1 = axs[-1].scatter(data_obj.cluster['fr'], y_from_probe, c=data_obj.cluster['group_c'], alpha=0.25, vmax=2)
 			divider = make_axes_locatable(axs[-1])
 
 			cax = divider.append_axes('right', size='5%', pad=0.05)
@@ -494,6 +496,91 @@ def plot_rf_azimuth_on_probe(cluster_map, chanposition, save_image_dir, window_i
 	ax.set_title('RF Neurons — Azimuth on Probe (win {})'.format(window_index))
 	plt.tight_layout()
 	plt.savefig(os.path.join(save_image_dir, 'rf_azimuth_on_probe_win{}.png'.format(window_index)), dpi=300)
+	plt.close()
+
+
+def plot_rf_on_probe(data, save_image_dir, window=0, parameter='azimuth'):
+	'''Plot RF neurons on the probe coloured by receptive field position, sized by firing rate.
+
+	Each neuron is placed at its channel's physical probe location. Colour
+	encodes the fitted azimuthal or elevation preference; marker area scales
+	with overall firing rate.
+
+	Parameters
+	----------
+	data : load_RF_data
+		Loaded RF data object.
+	save_image_dir : str
+		Directory where the output PNG will be saved.
+	window : int, optional
+		Analysis window index. Default is 0.
+	parameter : str, optional
+		Which RF parameter to colour by: ``'azimuth'`` or ``'elevation'``.
+		Default is ``'azimuth'``.
+	'''
+	w = window
+	rf_mask = data.is_rf[w]
+	rf_idx = np.where(rf_mask)[0]
+	if len(rf_idx) == 0:
+		return
+
+	cluster_dedup = data.cluster[~data.cluster.index.duplicated(keep='first')]
+	fr = cluster_dedup.loc[data.good_neurons, 'fr'].values
+	ch = cluster_dedup.loc[data.good_neurons, 'ch'].values.astype(int)
+
+	params = data.parameters[w]
+	azimuth = np.degrees(params[:, 3])
+	elevation = 90 - np.degrees(params[:, 2])
+
+	rf_fr = fr[rf_idx]
+	rf_ch = ch[rf_idx]
+
+	if parameter == 'azimuth':
+		values = azimuth[rf_idx]
+		cmap = 'RdBu_r'
+		label = 'Preferred Azimuth (deg)'
+		vmin, vmax = -144, 144
+		fname = 'rf_azimuth_on_probe_win{}.png'.format(w)
+	else:
+		values = elevation[rf_idx]
+		cmap = 'coolwarm'
+		label = 'Preferred Elevation (deg)'
+		vmin, vmax = -40, 40
+		fname = 'rf_elevation_on_probe_win{}.png'.format(w)
+
+	positions = _offset_duplicate_channels(rf_ch, data.channelposition)
+
+	fr_min = max(rf_fr.min(), 1e-2)
+	fr_max = rf_fr.max()
+	if fr_max > fr_min:
+		sizes = 20 + 280 * (rf_fr - fr_min) / (fr_max - fr_min)
+	else:
+		sizes = np.full(len(rf_fr), 100.0)
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(data.channelposition[:, 0], data.channelposition[:, 1],
+			   facecolors='None', edgecolors='lightgray', s=10)
+	sc = ax.scatter(positions[:, 0], positions[:, 1],
+					c=values, cmap=cmap, s=sizes,
+					vmin=vmin, vmax=vmax,
+					edgecolors='k', linewidths=0.3, alpha=0.85)
+
+	divider = make_axes_locatable(ax)
+	cax = divider.append_axes('right', size='5%', pad=0.05)
+	cbar = fig.colorbar(sc, cax=cax, orientation='vertical')
+	cbar.set_label(label)
+
+	# FR size legend
+	for fr_val in [fr_min, (fr_min + fr_max) / 2, fr_max]:
+		sz = 20 + 280 * (fr_val - fr_min) / (fr_max - fr_min) if fr_max > fr_min else 100
+		ax.scatter([], [], c='gray', s=sz, label='{:.1f} Hz'.format(fr_val), alpha=0.7)
+	ax.legend(title='Firing Rate', loc='upper right', fontsize='small', title_fontsize='small')
+
+	ax.set_ylabel('Distance from tip (um)')
+	ax.set_xlabel('Span (um)')
+	ax.set_title('RF Neurons on Probe — {} (win {})'.format(parameter.capitalize(), w))
+	plt.tight_layout()
+	plt.savefig(os.path.join(save_image_dir, fname), dpi=300)
 	plt.close()
 
 

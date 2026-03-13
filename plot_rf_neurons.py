@@ -28,6 +28,7 @@ from python.visualizations import (
     cluster_info_waveform,
     model_performance,
     PatternRaster3d,
+    plot_rf_on_probe,
 )
 
 
@@ -357,6 +358,14 @@ def main():
     topo_path = os.path.join(outdir, 'topographic_map.png')
     plot_topographic_map(data, mask, topo_path, w, anat_ref=args.anat_ref)
     print(f'  Saved topographic map → {topo_path}')
+
+    # --- RF on probe (azimuth and elevation) ---
+    for param in ('azimuth', 'elevation'):
+        try:
+            plot_rf_on_probe(data, outdir, window=w, parameter=param)
+            print(f'  Saved rf_{param}_on_probe → {outdir}')
+        except Exception as e:
+            print(f'  rf_{param}_on_probe FAILED — {e}')
 
     # --- Per-neuron plots ---
     window_range = [int(data.windows[w][0]), int(data.windows[w][1])]
