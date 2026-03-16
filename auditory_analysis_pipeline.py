@@ -10,6 +10,7 @@ Date: 2026-02-10
 import os
 import math
 import yaml
+import json
 
 from scipy.stats import poisson
 from scipy.stats import nbinom
@@ -886,6 +887,21 @@ if __name__ == '__main__':
 							cluster_map_df[f'delta_bic_win{w}'] = ws['delta_bic']
 						cluster_map_df.to_csv(os.path.join(seqsavedir, 'cluster_map.csv'), index=False)
 						print('Cluster map saved to :', os.path.join(seqsavedir, 'cluster_map.csv'), file=f)
+
+						# Save a config file with the info needed to run plot_rf_neurons.py
+						abs_seqsavedir = os.path.abspath(seqsavedir.rstrip('/'))
+						plot_rf_config = {
+							'input_dir': abs_seqsavedir,
+							'spikesorting': config.spikesorting,
+							'window': 0,
+							'selection': 'rf',
+							'command': 'python plot_rf_neurons.py -i "{}" -ss {}'.format(
+								abs_seqsavedir, config.spikesorting),
+						}
+						plot_rf_config_path = os.path.join(seqsavedir, 'plot_rf_neurons_config.json')
+						with open(plot_rf_config_path, 'w') as jf:
+							json.dump(plot_rf_config, jf, indent=2)
+						print('RF plot config saved to :', plot_rf_config_path, file=f)
 
 				elif fit == 'RandomChord':
 					seqsavedir = os.path.join(config.savedir, '{0} mult {1}/'.format(key, mult))
