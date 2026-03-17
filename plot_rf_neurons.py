@@ -59,6 +59,10 @@ def parse_args():
         help='Skip raster plots.',
     )
     parser.add_argument(
+        '--no-per-neuron', action='store_true',
+        help='Skip all per-neuron plots (cluster_info, model_performance, raster).',
+    )
+    parser.add_argument(
         '-ss', '--spikesorting', default='kilosort4',
         help='Spike sorter (default: kilosort4).',
     )
@@ -395,6 +399,10 @@ def main():
             print(f'  rf_{param}_on_probe FAILED — {e}')
 
     # --- Per-neuron plots ---
+    if args.no_per_neuron:
+        print(f'\nDone — skipped per-neuron plots (--no-per-neuron).')
+        return
+
     window_range = [int(data.windows[w][0]), int(data.windows[w][1])]
     n_total = len(selected_indices)
 
