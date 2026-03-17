@@ -64,6 +64,10 @@ def parse_args():
         '--anat-ref', type=float, default=0,
         help='Anatomical reference value (um) to shift probe span along x-axis (default: 0).',
     )
+    parser.add_argument(
+        '-k', '--kilosort-loc', default=None,
+        help='Explicit path to the kilosort4 output directory (overrides auto-detection).',
+    )
     return parser.parse_args()
 
 
@@ -324,7 +328,7 @@ def main():
     # --- Load data ---
     input_dirs = args.input if len(args.input) > 1 else args.input[0]
     print(f'Loading data from {args.input} ...')
-    data = load_RF_data(input_dirs, spikesorting=args.spikesorting)
+    data = load_RF_data(input_dirs, spikesorting=args.spikesorting, kilosort_loc=args.kilosort_loc)
 
     w = args.window
     mask = build_mask(data, args.selection, w)

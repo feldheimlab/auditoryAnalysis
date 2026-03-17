@@ -51,13 +51,14 @@ def _offset_duplicate_channels(ch_indices, chanposition, offset_step=5.0):
 
 class load_RF_data():
 	@staticmethod
-	def _load_single(dataloc, spikesorting):
+	def _load_single(dataloc, spikesorting, kilosort_loc=None):
 		'''Load data from a single directory, returning a dict of all arrays.'''
 		assert os.path.exists(dataloc), 'Data directory not found: ' + dataloc
 		print('Loading data from: \n\t', dataloc)
 
 		if spikesorting == 'kilosort4':
-			kilosort_loc = os.path.join(os.path.dirname(os.path.dirname(dataloc)), 'kilosort4')
+			if kilosort_loc is None:
+				kilosort_loc = os.path.join(os.path.dirname(os.path.dirname(dataloc)), 'kilosort4')
 			assert os.path.exists(kilosort_loc), 'Could not find kilosort data.  Expected locatation: \n\t' + kilosort_loc
 			print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
 
@@ -90,9 +91,24 @@ class load_RF_data():
 		result['activity_df'] = pd.read_csv(os.path.join(dataloc, 'activity-df.csv'), sep=',', index_col=0)
 		
 		if spikesorting == 'kilosort4':
-			result['cluster'] = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
+			# Prefer the combined cluster_info.csv saved by the pipeline (has all IDs for
+			# dual-recording runs); fall back to the kilosort TSV for single recordings.
+			combined_csv = os.path.join(os.path.dirname(dataloc), 'cluster_info.csv')
+			if os.path.exists(combined_csv):
+				cluster_df = pd.read_csv(combined_csv)
+				if 'ch' in cluster_df.columns and 'most_active_channel' not in cluster_df.columns:
+					cluster_df['most_active_channel'] = cluster_df['ch']
+				cluster_df = cluster_df.set_index('cluster_id')
+				result['cluster'] = cluster_df
+			else:
+				result['cluster'] = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
 			result['templates'] = np.load(os.path.join(kilosort_loc, 'templates.npy'))
-			result['channelposition'] = np.load(os.path.join(kilosort_loc, 'channel_positions.npy'))
+			# Prefer combined probe_map.npy saved by the pipeline (dual-recording case)
+			combined_probe_map = os.path.join(os.path.dirname(dataloc), 'probe_map.npy')
+			if os.path.exists(combined_probe_map):
+				result['channelposition'] = np.load(combined_probe_map)
+			else:
+				result['channelposition'] = np.load(os.path.join(kilosort_loc, 'channel_positions.npy'))
 		elif spikesorting == 'vision':
 			import scipy.io as sio
 			result['templates'] = sio.loadmat(os.path.join(result['parenetdir'], 'eisummary.mat'))
@@ -139,7 +155,7 @@ class load_RF_data():
 
 		return result
 
-	def __init__(self, dataloc, spikesorting='kilosort4'):
+	def __init__(self, dataloc, spikesorting='kilosort4', kilosort_loc=None):
 		'''Load receptive field analysis results from the pipeline output directory.
 
 		Reads pattern arrays, analysis windows, activity DataFrames, Kent
@@ -190,7 +206,7 @@ class load_RF_data():
 		if isinstance(dataloc, str):
 			dataloc = [dataloc]
 
-		datasets = [self._load_single(d, spikesorting) for d in dataloc]
+		datasets = [self._load_single(d, spikesorting, kilosort_loc=kilosort_loc) for d in dataloc]
 
 		self.spikesorting = spikesorting
 		self.azimuths = np.arange(17)*18 - 144

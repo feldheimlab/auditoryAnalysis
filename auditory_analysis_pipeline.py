@@ -352,12 +352,18 @@ if __name__ == '__main__':
 	else:
 		import re
 		results_name = 'results'
-		for part in dataloc.split(os.sep):
+		# Place results as a sister to the experiment date directory (e.g.
+		# .../experiment/results_2026-03-12 alongside .../experiment/2026-03-12-0)
+		abs_dataloc = os.path.abspath(dataloc)
+		parts = abs_dataloc.split(os.sep)
+		common_parent = config.parentdir  # fallback
+		for i, part in enumerate(parts):
 			date_match = re.match(r'(\d{4}-\d{2}-\d{2})', part)
 			if date_match:
 				results_name = 'results_{}'.format(date_match.group(1))
+				common_parent = os.sep.join(parts[:i]) or os.sep
 				break
-		config.savedir = os.path.join(config.parentdir, results_name)
+		config.savedir = os.path.join(common_parent, results_name)
 	if not os.path.exists(config.savedir):
 		os.mkdir(config.savedir)
 
@@ -890,13 +896,15 @@ if __name__ == '__main__':
 
 						# Save a config file with the info needed to run plot_rf_neurons.py
 						abs_seqsavedir = os.path.abspath(seqsavedir.rstrip('/'))
+						abs_kilosort_loc = os.path.abspath(config.dataloc)
 						plot_rf_config = {
 							'input_dir': abs_seqsavedir,
 							'spikesorting': config.spikesorting,
+							'kilosort_loc': abs_kilosort_loc,
 							'window': 0,
 							'selection': 'rf',
-							'command': 'python plot_rf_neurons.py -i "{}" -ss {}'.format(
-								abs_seqsavedir, config.spikesorting),
+							'command': 'python plot_rf_neurons.py -i "{}" -ss {} -k "{}"'.format(
+								abs_seqsavedir, config.spikesorting, abs_kilosort_loc),
 						}
 						plot_rf_config_path = os.path.join(seqsavedir, 'plot_rf_neurons_config.json')
 						with open(plot_rf_config_path, 'w') as jf:
