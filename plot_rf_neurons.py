@@ -29,6 +29,8 @@ from python.visualizations import (
     model_performance,
     PatternRaster3d,
     plot_rf_on_probe,
+    plot_neurons_relative_to_probe,
+    plot_overall_fr_on_probe,
 )
 
 
@@ -353,6 +355,31 @@ def main():
     if not os.path.exists(outdir):
         os.makedirs(outdir)
     print(f'Saving plots to {outdir}')
+
+    # --- Cluster locations on probe ---
+    # plot_neurons_relative_to_probe expects data_obj.chanposition and class_col;
+    # bridge the load_RF_data attribute names here.
+    try:
+        data.chanposition = data.channelposition
+        if not hasattr(data, 'class_col'):
+            # Infer from cluster columns; 'group' is the kilosort4 default
+            for col in ('group', 'KSLabel', 'quality'):
+                if col in data.cluster.columns:
+                    data.class_col = col
+                    break
+            else:
+                data.class_col = data.cluster.columns[0]
+        plot_neurons_relative_to_probe(data_obj=data, save_image_dir=outdir)
+        print(f'  Saved cluster_loc_relative_to_probe → {outdir}')
+    except Exception as e:
+        print(f'  cluster_loc_relative_to_probe FAILED — {e}')
+
+    # --- FR on probe ---
+    try:
+        plot_overall_fr_on_probe(data, outdir, good_neuron_ids=data.good_neurons)
+        print(f'  Saved overall_fr_on_probe → {outdir}')
+    except Exception as e:
+        print(f'  overall_fr_on_probe FAILED — {e}')
 
     # --- Topographic map ---
     topo_path = os.path.join(outdir, 'topographic_map.png')

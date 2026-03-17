@@ -450,30 +450,38 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 			plt.savefig(os.path.join(save_image_dir, 'cluster_loc_relative_to_probe.png'), dpi=300)
 
 
-def plot_overall_fr_on_probe(cluster_map, chanposition, save_image_dir):
+def plot_overall_fr_on_probe(data_obj, save_image_dir, good_neuron_ids=None):
 	'''Plot overall firing rate of good neurons mapped to probe position.
 
-	Firing rate is shown on a log10 scale (spikes/s). Uses ``span`` and
-	``depth`` columns from cluster_map for positioning.
+	Firing rate is shown on a log10 scale (spikes/s).
 
 	Parameters
 	----------
-	cluster_map : pd.DataFrame
-		One row per good neuron with ``span``, ``depth``, ``fr``, ``ch`` columns.
-	chanposition : np.ndarray
-		(N,2) probe channel positions for background outline.
+	data_obj : object
+		Object with ``cluster`` (DataFrame with ``ch``, ``fr`` columns),
+		``chanposition`` (or ``channelposition``) array, and ``spikesorting``.
 	save_image_dir : str
 		Directory path where the output image will be saved.
+	good_neuron_ids : array-like or None, optional
+		Cluster IDs to include.  If None, all rows in cluster are used.
 	'''
 	from matplotlib.colors import LogNorm
 
-	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
-	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
+	chanposition = getattr(data_obj, 'chanposition', getattr(data_obj, 'channelposition', None))
+	cluster_map = data_obj.cluster.copy()
+	if good_neuron_ids is not None:
+		cluster_map = cluster_map[cluster_map.index.isin(good_neuron_ids)]
 
-	valid = cluster_map.dropna(subset=['span', 'depth', 'fr'])
+	valid = cluster_map.dropna(subset=['ch', 'fr'])
+	if len(valid) == 0:
+		return
+
 	fr_values = valid['fr'].values.astype(float)
 	fr_values = np.clip(fr_values, a_min=1e-2, a_max=None)  # avoid log(0)
 	positions = _offset_duplicate_channels(valid['ch'].astype(int).values, chanposition)
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
 	sc = ax.scatter(positions[:, 0], positions[:, 1], c=fr_values,
 					cmap='hot', edgecolors='k', linewidths=0.3, s=30,
 					norm=LogNorm(vmin=fr_values.min(), vmax=fr_values.max()))
