@@ -220,7 +220,10 @@ class data_load():
 				cluster = pd.read_csv(os.path.join(dataloc, 'cluster_group.tsv'), sep='\t')
 			
 			cluster.dropna(subset=[self.class_col], inplace=True)
-			self.cluster = cluster[['cluster_id', self.class_col, 'ch', 'depth', 'fr']]
+			keep_cols = ['cluster_id', self.class_col, 'ch', 'depth', 'fr']
+			if 'most_active_channel' in cluster.columns:
+				keep_cols.append('most_active_channel')
+			self.cluster = cluster[keep_cols]
 			
 			groups = np.unique(cluster[class_col])
 
@@ -423,6 +426,9 @@ if __name__ == '__main__':
 			ch_offset = pm0.shape[0]
 			combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] = \
 				combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] + ch_offset
+			if 'most_active_channel' in combined_cluster.columns:
+				combined_cluster.loc[combined_cluster['dataset'] == 1, 'most_active_channel'] = \
+					combined_cluster.loc[combined_cluster['dataset'] == 1, 'most_active_channel'] + ch_offset
 
 			print('Recording 0: {} neurons, Recording 1: {} neurons, Combined: {}'.format(
 				nNeu_rec0, data_raw2.asdf.shape[0], len(combined_IDs)), file=f)

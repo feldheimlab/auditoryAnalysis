@@ -109,12 +109,14 @@ class load_RF_data():
 			combined_csv = os.path.join(os.path.dirname(dataloc), 'cluster_info.csv')
 			if os.path.exists(combined_csv):
 				cluster_df = pd.read_csv(combined_csv)
-				if 'ch' in cluster_df.columns and 'most_active_channel' not in cluster_df.columns:
-					cluster_df['most_active_channel'] = cluster_df['ch']
 				cluster_df = cluster_df.set_index('cluster_id')
 				result['cluster'] = cluster_df
 			else:
-				result['cluster'] = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
+				cluster_df = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
+				result['cluster'] = cluster_df
+			# Fallback: if most_active_channel is missing (old results), use ch
+			if 'most_active_channel' not in result['cluster'].columns:
+				result['cluster']['most_active_channel'] = result['cluster']['ch']
 			# Prefer combined templates.npy saved by the pipeline (dual-recording case)
 			combined_templates = os.path.join(os.path.dirname(dataloc), 'templates.npy')
 			if os.path.exists(combined_templates):
