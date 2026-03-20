@@ -14,6 +14,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from scipy.optimize import curve_fit
 
 warnings.filterwarnings('ignore', message='.*FigureCanvasAgg is non-interactive.*')
@@ -29,6 +30,9 @@ from python.visualizations import (
     model_performance,
     PatternRaster3d,
     plot_rf_on_probe,
+    plot_neurons_relative_to_probe,
+    plot_overall_fr_on_probe,
+    plot_psth_gauss_params_hist,
 )
 
 
@@ -55,6 +59,10 @@ def parse_args():
     parser.add_argument(
         '--no-raster', action='store_true',
         help='Skip raster plots.',
+    )
+    parser.add_argument(
+        '--no-per-neuron', action='store_true',
+        help='Skip all per-neuron plots (cluster_info, model_performance, raster).',
     )
     parser.add_argument(
         '-ss', '--spikesorting', default='kilosort4',
@@ -358,38 +366,84 @@ def main():
         os.makedirs(outdir)
     print(f'Saving plots to {outdir}')
 
+    # --- Cluster locations on probe ---
+    # plot_neurons_relative_to_probe expects data_obj.chanposition and class_col;
+    # bridge the load_RF_data attribute names here.
+    try:
+        data.chanposition = data.channelposition
+        if not hasattr(data, 'class_col'):
+            # Infer from cluster columns; 'group' is the kilosort4 default
+            for col in ('group', 'KSLabel', 'quality'):
+                if col in data.cluster.columns:
+                    data.class_col = col
+                    break
+            else:
+                data.class_col = data.cluster.columns[0]
+        plot_neurons_relative_to_probe(data_obj=data, save_image_dir=outdir)
+        print(f'  Saved cluster_loc_relative_to_probe → {outdir}')
+    except Exception as e:
+        print(f'  cluster_loc_relative_to_probe FAILED — {e}')
+
+    # --- FR on probe ---
+    try:
+        plot_overall_fr_on_probe(data, outdir, good_neuron_ids=data.good_neurons)
+        print(f'  Saved overall_fr_on_probe → {outdir}')
+    except Exception as e:
+        print(f'  overall_fr_on_probe FAILED — {e}')
+
     # --- Topographic map ---
     topo_path = os.path.join(outdir, 'topographic_map.png')
     plot_topographic_map(data, mask, topo_path, w, anat_ref=args.anat_ref)
     print(f'  Saved topographic map → {topo_path}')
 
-    # --- RF on probe (azimuth and elevation) ---
-    for param in ('azimuth', 'elevation'):
+    # --- RF on probe (contralateral, ipsilateral, elevation) ---
+    for param in ('contralateral', 'ipsilateral', 'elevation'):
         try:
             plot_rf_on_probe(data, outdir, window=w, parameter=param)
             print(f'  Saved rf_{param}_on_probe → {outdir}')
         except Exception as e:
             print(f'  rf_{param}_on_probe FAILED — {e}')
 
+    # --- PSTH gaussian fit parameter histograms (summary, from mapped_info.csv) ---
+    mapped_csv = os.path.join(os.path.dirname(args.input[0]), 'mapped_info.csv')
+    if os.path.exists(mapped_csv):
+        try:
+            plot_psth_gauss_params_hist(mapped_csv, outdir)
+            print(f'  Saved psth_gauss_params_hist → {outdir}')
+        except Exception as e:
+            print(f'  psth_gauss_params_hist FAILED — {e}')
+
     # --- Per-neuron plots ---
+    if args.no_per_neuron:
+        print(f'\nDone — skipped per-neuron plots (--no-per-neuron).')
+        return
+
+    # Individual cluster plots go into a dedicated subdirectory
+    cluster_plot_dir = os.path.join(outdir, 'rf_neurons')
+    if not os.path.exists(cluster_plot_dir):
+        os.makedirs(cluster_plot_dir)
+
     window_range = [int(data.windows[w][0]), int(data.windows[w][1])]
     n_total = len(selected_indices)
+    gauss_records = {}  # cluster_id → {base, mean, std}
 
     for count, (idx, clust) in enumerate(zip(selected_indices, selected_clusters), 1):
         tag = f'[{count}/{n_total}] cluster {clust}'
 
         # cluster_info_waveform
         try:
-            sp = os.path.join(outdir, f'cluster_info_cluster{clust}.png')
-            cluster_info_waveform(data, cluster=int(clust), index=int(idx), savepath=sp)
+            sp = os.path.join(cluster_plot_dir, f'cluster_info_cluster{clust}.png')
+            gparams = cluster_info_waveform(data, cluster=int(clust), index=int(idx), savepath=sp)
             plt.close('all')
+            if gparams is not None:
+                gauss_records[int(clust)] = gparams
             print(f'  {tag}: cluster_info ✓')
         except Exception as e:
             print(f'  {tag}: cluster_info FAILED — {e}')
 
         # model_performance
         try:
-            sp = os.path.join(outdir, f'model_performance_cluster{clust}.png')
+            sp = os.path.join(cluster_plot_dir, f'model_performance_cluster{clust}.png')
             model_performance(data, index=int(idx), savepath=sp)
             plt.close('all')
             print(f'  {tag}: model_performance ✓')
@@ -399,7 +453,7 @@ def main():
         # raster
         if not args.no_raster:
             try:
-                sp = os.path.join(outdir, f'raster_cluster{clust}.png')
+                sp = os.path.join(cluster_plot_dir, f'raster_cluster{clust}.png')
                 PatternRaster3d(data.pattern[idx, :, :, 0, :],
                                 timerange=window_range, savepath=sp)
                 plt.close('all')
@@ -408,6 +462,20 @@ def main():
                 print(f'  {tag}: raster FAILED — {e}')
 
     print(f'\nDone — {n_total} neurons plotted in {outdir}')
+
+    # --- Write gaussian PSTH fit params to mapped_info.csv for RF neurons ---
+    if gauss_records:
+        mapped_csv = os.path.join(os.path.dirname(args.input[0]), 'mapped_info.csv')
+        if os.path.exists(mapped_csv):
+            mdf = pd.read_csv(mapped_csv)
+            mdf['psth_gauss_base'] = mdf['cluster_id'].map(
+                lambda cid: gauss_records.get(int(cid), {}).get('base', float('nan')))
+            mdf['psth_gauss_mean'] = mdf['cluster_id'].map(
+                lambda cid: gauss_records.get(int(cid), {}).get('mean', float('nan')))
+            mdf['psth_gauss_std'] = mdf['cluster_id'].map(
+                lambda cid: gauss_records.get(int(cid), {}).get('std', float('nan')))
+            mdf.to_csv(mapped_csv, index=False)
+            print(f'Gaussian fit params written to {mapped_csv}')
 
     # --- RF comparison across two segments ---
     if len(args.input) == 2:

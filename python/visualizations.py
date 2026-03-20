@@ -57,10 +57,23 @@ class load_RF_data():
 		print('Loading data from: \n\t', dataloc)
 
 		if spikesorting == 'kilosort4':
-			if kilosort_loc is None:
+			# Check if combined files exist in the results dir (dual-recording case);
+			# if so, kilosort_loc is not strictly needed.
+			_results_dir = os.path.dirname(dataloc)
+			_has_combined = (
+				os.path.exists(os.path.join(_results_dir, 'mapped_info.csv')) and
+				os.path.exists(os.path.join(_results_dir, 'templates.npy')) and
+				os.path.exists(os.path.join(_results_dir, 'probe_map.npy'))
+			)
+			if kilosort_loc is None and not _has_combined:
 				kilosort_loc = os.path.join(os.path.dirname(os.path.dirname(dataloc)), 'kilosort4')
-			assert os.path.exists(kilosort_loc), 'Could not find kilosort data.  Expected locatation: \n\t' + kilosort_loc
-			print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
+			if kilosort_loc is not None and not _has_combined:
+				assert os.path.exists(kilosort_loc), 'Could not find kilosort data.  Expected locatation: \n\t' + kilosort_loc
+				print('\nKilosort data found at the expected locatation: \n\t' + kilosort_loc)
+			elif kilosort_loc is not None and os.path.exists(kilosort_loc):
+				print('\nKilosort data found at: \n\t' + kilosort_loc)
+			else:
+				print('\nUsing combined files from results directory (kilosort_loc not required).')
 
 		image_save_loc = os.path.join(os.path.dirname(dataloc), 'images')
 		if not os.path.exists(image_save_loc):
@@ -91,18 +104,25 @@ class load_RF_data():
 		result['activity_df'] = pd.read_csv(os.path.join(dataloc, 'activity-df.csv'), sep=',', index_col=0)
 		
 		if spikesorting == 'kilosort4':
-			# Prefer the combined cluster_info.csv saved by the pipeline (has all IDs for
+			# Prefer the combined mapped_info.csv saved by the pipeline (has all IDs for
 			# dual-recording runs); fall back to the kilosort TSV for single recordings.
-			combined_csv = os.path.join(os.path.dirname(dataloc), 'cluster_info.csv')
+			combined_csv = os.path.join(os.path.dirname(dataloc), 'mapped_info.csv')
 			if os.path.exists(combined_csv):
 				cluster_df = pd.read_csv(combined_csv)
-				if 'ch' in cluster_df.columns and 'most_active_channel' not in cluster_df.columns:
-					cluster_df['most_active_channel'] = cluster_df['ch']
 				cluster_df = cluster_df.set_index('cluster_id')
 				result['cluster'] = cluster_df
 			else:
-				result['cluster'] = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
-			result['templates'] = np.load(os.path.join(kilosort_loc, 'templates.npy'))
+				cluster_df = pd.read_csv(os.path.join(kilosort_loc, 'cluster_info.tsv'), sep='\t', index_col=0)
+				result['cluster'] = cluster_df
+			# Fallback: if most_active_channel is missing (old results), use ch
+			if 'most_active_channel' not in result['cluster'].columns:
+				result['cluster']['most_active_channel'] = result['cluster']['ch']
+			# Prefer combined templates.npy saved by the pipeline (dual-recording case)
+			combined_templates = os.path.join(os.path.dirname(dataloc), 'templates.npy')
+			if os.path.exists(combined_templates):
+				result['templates'] = np.load(combined_templates)
+			else:
+				result['templates'] = np.load(os.path.join(kilosort_loc, 'templates.npy'))
 			# Prefer combined probe_map.npy saved by the pipeline (dual-recording case)
 			combined_probe_map = os.path.join(os.path.dirname(dataloc), 'probe_map.npy')
 			if os.path.exists(combined_probe_map):
@@ -432,30 +452,38 @@ def plot_neurons_relative_to_probe(data_obj, save_image_dir):
 			plt.savefig(os.path.join(save_image_dir, 'cluster_loc_relative_to_probe.png'), dpi=300)
 
 
-def plot_overall_fr_on_probe(cluster_map, chanposition, save_image_dir):
+def plot_overall_fr_on_probe(data_obj, save_image_dir, good_neuron_ids=None):
 	'''Plot overall firing rate of good neurons mapped to probe position.
 
-	Firing rate is shown on a log10 scale (spikes/s). Uses ``span`` and
-	``depth`` columns from cluster_map for positioning.
+	Firing rate is shown on a log10 scale (spikes/s).
 
 	Parameters
 	----------
-	cluster_map : pd.DataFrame
-		One row per good neuron with ``span``, ``depth``, ``fr``, ``ch`` columns.
-	chanposition : np.ndarray
-		(N,2) probe channel positions for background outline.
+	data_obj : object
+		Object with ``cluster`` (DataFrame with ``ch``, ``fr`` columns),
+		``chanposition`` (or ``channelposition``) array, and ``spikesorting``.
 	save_image_dir : str
 		Directory path where the output image will be saved.
+	good_neuron_ids : array-like or None, optional
+		Cluster IDs to include.  If None, all rows in cluster are used.
 	'''
 	from matplotlib.colors import LogNorm
 
-	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
-	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
+	chanposition = getattr(data_obj, 'chanposition', getattr(data_obj, 'channelposition', None))
+	cluster_map = data_obj.cluster.copy()
+	if good_neuron_ids is not None:
+		cluster_map = cluster_map[cluster_map.index.isin(good_neuron_ids)]
 
-	valid = cluster_map.dropna(subset=['span', 'depth', 'fr'])
+	valid = cluster_map.dropna(subset=['ch', 'fr'])
+	if len(valid) == 0:
+		return
+
 	fr_values = valid['fr'].values.astype(float)
 	fr_values = np.clip(fr_values, a_min=1e-2, a_max=None)  # avoid log(0)
 	positions = _offset_duplicate_channels(valid['ch'].astype(int).values, chanposition)
+
+	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
+	ax.scatter(chanposition[:, 0], chanposition[:, 1], facecolors='None', edgecolors='lightgray', s=10)
 	sc = ax.scatter(positions[:, 0], positions[:, 1], c=fr_values,
 					cmap='hot', edgecolors='k', linewidths=0.3, s=30,
 					norm=LogNorm(vmin=fr_values.min(), vmax=fr_values.max()))
@@ -470,6 +498,66 @@ def plot_overall_fr_on_probe(cluster_map, chanposition, save_image_dir):
 	ax.set_title('Overall Firing Rate on Probe')
 	plt.tight_layout()
 	plt.savefig(os.path.join(save_image_dir, 'overall_fr_on_probe.png'), dpi=300)
+	plt.close()
+
+
+def plot_psth_gauss_params_hist(mapped_info_csv, save_image_dir):
+	'''Plot histograms of the gaussian fit parameters (mean, std, base) from
+	the 20 ms PSTH fits stored in mapped_info.csv for RF neurons.
+
+	Parameters
+	----------
+	mapped_info_csv : str
+		Path to mapped_info.csv containing columns psth_gauss_mean,
+		psth_gauss_std, and psth_gauss_base.
+	save_image_dir : str
+		Directory where the figure will be saved.
+	'''
+	df = pd.read_csv(mapped_info_csv)
+	rf = df.dropna(subset=['psth_gauss_mean', 'psth_gauss_std', 'psth_gauss_base'])
+	if len(rf) == 0:
+		print('plot_psth_gauss_params_hist: no RF neurons with gaussian params found.')
+		return
+
+	fig, axs = plt.subplots(1, 3, figsize=(10, 3))
+
+	# --- Mean: 1 ms bins, 0–20 ms, ignore outliers ---
+	mean_bins = np.arange(0, 21, 1)   # edges 0,1,...,20  → 20 bins
+	mean_vals = rf['psth_gauss_mean'].values
+	mean_vals = mean_vals[(mean_vals >= 0) & (mean_vals <= 20)]
+	n_mean = len(mean_vals)
+	axs[0].hist(mean_vals, bins=mean_bins, color='C0', edgecolor='k', linewidth=0.4)
+	axs[0].set_xlim(0, 20)
+	axs[0].set_xlabel('Mean (ms)')
+	axs[0].set_ylabel('Neuron count')
+	axs[0].set_title(f'PSTH Gaussian Mean\n(n={n_mean})')
+
+	# --- Std: 1 ms bins, 0–20 ms, ignore outliers ---
+	std_bins = np.arange(0, 21, 1)
+	std_vals = rf['psth_gauss_std'].values
+	std_vals = std_vals[(std_vals >= 0) & (std_vals <= 20)]
+	n_std = len(std_vals)
+	axs[1].hist(std_vals, bins=std_bins, color='C1', edgecolor='k', linewidth=0.4)
+	axs[1].set_xlim(0, 20)
+	axs[1].set_xlabel('Std (ms)')
+	axs[1].set_ylabel('Neuron count')
+	axs[1].set_title(f'PSTH Gaussian Std\n(n={n_std})')
+
+	# --- Base: 5 spikes/sec bins, 0–100 spikes/sec, ignore outliers ---
+	base_bins = np.arange(0, 101, 5)   # edges 0,5,...,100  → 20 bins
+	base_vals = rf['psth_gauss_base'].values
+	base_vals = base_vals[(base_vals >= 0) & (base_vals <= 100)]
+	n_base = len(base_vals)
+	axs[2].hist(base_vals, bins=base_bins, color='C2', edgecolor='k', linewidth=0.4)
+	axs[2].set_xlim(0, 100)
+	axs[2].set_xlabel('Base (spikes/sec)')
+	axs[2].set_ylabel('Neuron count')
+	axs[2].set_title(f'PSTH Gaussian Base\n(n={n_base})')
+
+	plt.suptitle(f'PSTH Gaussian Fit Parameters — 20 ms window', y=1.02)
+	plt.tight_layout()
+	savepath = os.path.join(save_image_dir, 'psth_gauss_params_hist.png')
+	plt.savefig(savepath, dpi=300, bbox_inches='tight')
 	plt.close()
 
 
@@ -541,8 +629,18 @@ def plot_rf_on_probe(data, save_image_dir, window=0, parameter='azimuth'):
 		return
 
 	cluster_dedup = data.cluster[~data.cluster.index.duplicated(keep='first')]
-	fr = cluster_dedup.loc[data.good_neurons, 'fr'].values
 	ch = cluster_dedup.loc[data.good_neurons, 'ch'].values.astype(int)
+
+	# Windowed FR: total APs in analysis window / total stimulus presentations / window duration
+	window_range = [int(data.windows[w][0]), int(data.windows[w][1])]
+	window_dur_s = (window_range[1] - window_range[0]) / 1000.0
+	n_el, n_az, n_rep = data.pattern.shape[1], data.pattern.shape[2], data.pattern.shape[3]
+	n_total_pres = n_el * n_az * n_rep
+	n_good = len(data.good_neurons)
+	fr = np.zeros(n_good)
+	for _i in range(n_good):
+		_hist, _ = PSTH(data, _i, window_range, 1)
+		fr[_i] = _hist.sum() / n_total_pres / window_dur_s
 
 	params = data.parameters[w]
 	azimuth = np.degrees(params[:, 3])
@@ -551,27 +649,49 @@ def plot_rf_on_probe(data, save_image_dir, window=0, parameter='azimuth'):
 	rf_fr = fr[rf_idx]
 	rf_ch = ch[rf_idx]
 
-	if parameter == 'azimuth':
-		values = azimuth[rf_idx]
-		cmap = 'RdBu_r'
+	all_positions = _offset_duplicate_channels(rf_ch, data.channelposition)
+
+	if parameter in ('azimuth', 'contralateral'):
+		raw_values = azimuth[rf_idx]
+		sub = raw_values >= -10
+		values = raw_values[sub]
+		positions = all_positions[sub]
+		plot_fr = rf_fr[sub]
+		cmap = 'plasma'
 		label = 'Preferred Azimuth (deg)'
-		vmin, vmax = -144, 144
-		fname = 'rf_azimuth_on_probe_win{}.png'.format(w)
-	else:
+		vmin, vmax = 0, 120
+		fname = 'rf_contralateral_on_probe_win{}.png'.format(w)
+		title = 'Contralateral RF Neurons (win {})'.format(w)
+	elif parameter == 'ipsilateral':
+		raw_values = azimuth[rf_idx]
+		sub = raw_values < -10
+		values = raw_values[sub]
+		positions = all_positions[sub]
+		plot_fr = rf_fr[sub]
+		cmap = 'plasma'
+		label = 'Preferred Azimuth (deg)'
+		vmin, vmax = -120, 0
+		fname = 'rf_ipsilateral_on_probe_win{}.png'.format(w)
+		title = 'Ipsilateral RF Neurons (win {})'.format(w)
+	else:  # elevation
 		values = elevation[rf_idx]
-		cmap = 'coolwarm'
+		positions = all_positions
+		plot_fr = rf_fr
+		cmap = 'viridis'
 		label = 'Preferred Elevation (deg)'
-		vmin, vmax = -40, 40
+		vmin, vmax = -20, 60
 		fname = 'rf_elevation_on_probe_win{}.png'.format(w)
+		title = 'RF Neurons on Probe — Elevation (win {})'.format(w)
 
-	positions = _offset_duplicate_channels(rf_ch, data.channelposition)
+	if len(values) == 0:
+		return
 
-	fr_min = max(rf_fr.min(), 1e-2)
-	fr_max = rf_fr.max()
+	fr_min = max(plot_fr.min(), 1e-2)
+	fr_max = plot_fr.max()
 	if fr_max > fr_min:
-		sizes = 20 + 280 * (rf_fr - fr_min) / (fr_max - fr_min)
+		sizes = 20 + 280 * (plot_fr - fr_min) / (fr_max - fr_min)
 	else:
-		sizes = np.full(len(rf_fr), 100.0)
+		sizes = np.full(len(plot_fr), 100.0)
 
 	fig, ax = plt.subplots(1, 1, figsize=(5, 8))
 	ax.scatter(data.channelposition[:, 0], data.channelposition[:, 1],
@@ -589,12 +709,12 @@ def plot_rf_on_probe(data, save_image_dir, window=0, parameter='azimuth'):
 	# FR size legend
 	for fr_val in [fr_min, (fr_min + fr_max) / 2, fr_max]:
 		sz = 20 + 280 * (fr_val - fr_min) / (fr_max - fr_min) if fr_max > fr_min else 100
-		ax.scatter([], [], c='gray', s=sz, label='{:.1f} Hz'.format(fr_val), alpha=0.7)
+		ax.scatter([], [], c='gray', s=sz, label='{:.2f} spikes/sec'.format(fr_val), alpha=0.7)
 	ax.legend(title='Firing Rate', loc='upper right', fontsize='small', title_fontsize='small')
 
 	ax.set_ylabel('Distance from tip (um)')
 	ax.set_xlabel('Span (um)')
-	ax.set_title('RF Neurons on Probe — {} (win {})'.format(parameter.capitalize(), w))
+	ax.set_title(title)
 	plt.tight_layout()
 	plt.savefig(os.path.join(save_image_dir, fname), dpi=300)
 	plt.close()
@@ -894,9 +1014,23 @@ def cluster_info_waveform(data_obj, cluster=None,
 	if data_obj.spikesorting == 'kilosort4':
 		group = data_obj.cluster.loc[cluster, 'group']
 		print(group)
-		channel = int(data_obj.cluster.loc[cluster, 'most_active_channel'])
 		templates_norm,_ = normalize_templates(data_obj.templates)
-		temp = templates_norm[cluster,:,:]
+		temp = templates_norm[cluster,:,:]  # (T, n_channels)
+		n_ch = temp.shape[1]
+		# For dual-recording the combined template has 2*C channels.
+		# Use most_active_channel (or ch) as a hint for which probe half
+		# this cluster belongs to, then find the true peak within that half.
+		if 'most_active_channel' in data_obj.cluster.columns:
+			hint_ch = int(data_obj.cluster.loc[cluster, 'most_active_channel'])
+		else:
+			hint_ch = int(data_obj.cluster.loc[cluster, 'ch'])
+		C = n_ch // 2 if n_ch > 384 else n_ch  # channels per probe
+		if n_ch > C and hint_ch >= C:
+			# rec1 half: channels C..2C-1
+			channel = C + int(np.argmax(np.max(np.abs(temp[:, C:]), axis=0)))
+		else:
+			# rec0 half (or single recording): channels 0..C-1
+			channel = int(np.argmax(np.max(np.abs(temp[:, :C]), axis=0)))
 		waveform = temp[:,channel]
 		loc = np.argmin(waveform)
 		fpms = 30
@@ -908,39 +1042,60 @@ def cluster_info_waveform(data_obj, cluster=None,
 		loc = np.argmin(waveform)
 		time_shift = (np.arange(121)-loc)/fpms
 	
-	fig, axs = plt.subplots(1,3, figsize=(6,3))
+	fig, axs = plt.subplots(1, 4, figsize=(12, 3))
 
-	axs[0].plot(time_shift, waveform, color='k')
-	axs[0].set_xticks([0,1])
-	axs[0].set_xlabel('time (ms)')
-	axs[0].set_ylabel('Normalized Amp')
-	axs[0].set_title('Waveform')
-#     axs[0].set_xlim([time_shift[int(loc-20)], time_shift[int(loc+40)]])
+	# Panel 0 — Probe location (most active channel highlighted)
+	ch = np.squeeze(data_obj.channelposition[channel, :])
+	axs[0].scatter(data_obj.channelposition[:, 0], data_obj.channelposition[:, 1],
+				   facecolors='None', edgecolors='k', s=10)
+	axs[0].scatter(ch[0], ch[1], facecolors='Red', edgecolors='k', s=30)
+	axs[0].set_xlabel('AP distance (um)')
+	axs[0].set_ylabel('distance from shank tip (um)')
+	axs[0].set_title('Most Active Channel')
+
+	# Panel 1 — Waveform
+	axs[1].plot(time_shift, waveform, color='k')
+	axs[1].set_xticks([0, 1])
+	axs[1].set_xlabel('time (ms)')
+	axs[1].set_ylabel('Normalized Amp')
+	axs[1].set_title('Waveform')
+
+	# Panel 2 — PSTH 0–20 ms, 1 ms bins, with Gaussian fit
 	histogram, bins = PSTH(data_obj, index, timerange, timeBinSz)
 	g_fit = gaussian_fit(histogram, bins[1:])
+	axs[2].bar(bins[1:], histogram, width=timeBinSz, color='b')
+	axs[2].plot(bins[1:], g_fit.predict(bins[1:]), linestyle=':', color='k')
+	axs[2].set_xticks([timerange[0], np.mean(timerange), timerange[1]])
+	axs[2].set_xlabel('time (ms)')
+	axs[2].set_ylabel('AP count')
+	axs[2].set_ylim(0, np.max(histogram) + 3)
+	axs[2].set_title('PSTH (0–20 ms)')
 
-	axs[1].bar(bins[1:], histogram, width=timeBinSz, color='b')
-	axs[1].plot(bins[1:], g_fit.predict(bins[1:]), linestyle=':', color='k')
-	axs[1].set_xticks([timerange[0], np.mean(timerange), timerange[1]])
-	axs[1].set_xlabel('time (ms)')
-	axs[1].set_ylabel('AP count')
-	axs[1].set_ylim(0, np.max(histogram)+3)
-	axs[1].set_title('PSTH')
-	
-	ch = np.squeeze(data_obj.channelposition[channel,:])
-	print(ch.shape)
-	axs[2].scatter(data_obj.channelposition[:,0], data_obj.channelposition[:,1], facecolors='None', edgecolors='k')
-	axs[2].scatter(ch[0], ch[1], facecolors='Red', edgecolors='k')
-	axs[2].set_xlabel('AP distance(um)')
-	axs[2].set_ylabel('distance from shank tip(um)')
-	axs[2].set_title('Most Active Channel')
+	# Panel 3 — PSTH 0–500 ms, 5 ms bins
+	histogram500, bins500 = PSTH(data_obj, index, [0, 500], 5)
+	axs[3].bar(bins500[1:], histogram500, width=5, color='b')
+	axs[3].set_xticks([0, 250, 500])
+	axs[3].set_xlabel('time (ms)')
+	axs[3].set_ylabel('AP count')
+	axs[3].set_ylim(0, max(np.max(histogram500), 1) + 3)
+	axs[3].set_title('PSTH (0–500 ms)')
 
-	axs[2].scatter(ch[0], ch[1], facecolors='Red', edgecolors='k')
+	# Extract gaussian fit params: g_fit.params = [height, mean, std, base]
+	# base is in AP-count/bin summed over all presentations; convert to spikes/sec
+	_n_pres = (data_obj.pattern.shape[1] * data_obj.pattern.shape[2]
+			   * data_obj.pattern.shape[3])
+	_bin_dur_s = timeBinSz / 1000.0
+	gauss_params = {
+		'base': float(g_fit.params[3]) / _n_pres / _bin_dur_s,
+		'mean': float(g_fit.params[1]),
+		'std':  float(g_fit.params[2]),
+	}
 
 	plt.tight_layout()
-	print(savepath)
-	fig.savefig(savepath, dpi=300)
-	plt.show()
+	if savepath is not None:
+		fig.savefig(savepath, dpi=300)
+	plt.close()
+	return gauss_params
 
 
 class TopographicMap:

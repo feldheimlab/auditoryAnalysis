@@ -220,7 +220,10 @@ class data_load():
 				cluster = pd.read_csv(os.path.join(dataloc, 'cluster_group.tsv'), sep='\t')
 			
 			cluster.dropna(subset=[self.class_col], inplace=True)
-			self.cluster = cluster[['cluster_id', self.class_col, 'ch', 'depth', 'fr']]
+			keep_cols = ['cluster_id', self.class_col, 'ch', 'depth', 'fr']
+			if 'most_active_channel' in cluster.columns:
+				keep_cols.append('most_active_channel')
+			self.cluster = cluster[keep_cols]
 			
 			groups = np.unique(cluster[class_col])
 
@@ -419,18 +422,19 @@ if __name__ == '__main__':
 				cluster2['dataset'] = 1
 				combined_cluster = pd.concat([cluster0, cluster2], ignore_index=True)
 
-			# Combine probe maps: reorder columns to (lateral, depth) so scatter
-			# plots show span on x-axis and distance from tip on y-axis.
-			# Meta files already encode real anatomical depth positions,
-			# so no additional offset is needed.
-			pm0 = data_raw.chanposition[:, [1, 0]].copy()   # swap to (lateral, depth)
-			pm1 = data_raw2.chanposition[:, [1, 0]].copy()  # swap to (lateral, depth)
+			# Combine probe maps: probeMapFromMeta already returns (span, depth)
+			# format matching channel_positions.npy — no column swap needed.
+			pm0 = data_raw.chanposition.copy()
+			pm1 = data_raw2.chanposition.copy()
 			combined_chanposition = np.concatenate([pm0, pm1], axis=0)
 
 			# Offset rec1 channel indices in cluster so they index into combined_chanposition
 			ch_offset = pm0.shape[0]
 			combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] = \
 				combined_cluster.loc[combined_cluster['dataset'] == 1, 'ch'] + ch_offset
+			if 'most_active_channel' in combined_cluster.columns:
+				combined_cluster.loc[combined_cluster['dataset'] == 1, 'most_active_channel'] = \
+					combined_cluster.loc[combined_cluster['dataset'] == 1, 'most_active_channel'] + ch_offset
 
 			print('Recording 0: {} neurons, Recording 1: {} neurons, Combined: {}'.format(
 				nNeu_rec0, data_raw2.asdf.shape[0], len(combined_IDs)), file=f)
@@ -441,16 +445,33 @@ if __name__ == '__main__':
 			nNeu_rec0 = None
 			combined_asdf = data_raw.asdf
 			combined_IDs = data_raw.IDs
-			combined_chanposition = data_raw.chanposition[:, [1, 0]].copy()  # swap to (lateral, depth)
+			combined_chanposition = data_raw.chanposition.copy()
 			if config.spikesorting == 'kilosort4':
 				combined_cluster = data_raw.cluster.copy()
 				combined_cluster['dataset'] = 0
 
 		# Save probe map to results folder
 		np.save(os.path.join(config.savedir, 'probe_map.npy'), combined_chanposition)
-		combined_cluster.to_csv(os.path.join(config.savedir, 'cluster_info.csv'), index=False)
+		combined_cluster.to_csv(os.path.join(config.savedir, 'mapped_info.csv'), index=False)
 		print('Probe map saved to: {}'.format(os.path.join(config.savedir, 'probe_map.npy')), file=f)
-		print('Cluster info saved to: {}'.format(os.path.join(config.savedir, 'cluster_info.csv')), file=f)
+		print('Cluster info saved to: {}'.format(os.path.join(config.savedir, 'mapped_info.csv')), file=f)
+
+		# Save templates to results folder.
+		# For dual-recording, build a combined array: shape (id_offset+n1, T, 2*C)
+		# so that cluster IDs and channel indices from combined_cluster index correctly.
+		if config.spikesorting == 'kilosort4':
+			if data_raw2 is not None:
+				tmpl0 = data_raw.templates   # (n0, T, C)
+				tmpl1 = data_raw2.templates  # (n1, T, C)
+				n0, T, C = tmpl0.shape
+				n1 = tmpl1.shape[0]
+				combined_tmpl = np.zeros((id_offset + n1, T, 2 * C), dtype=tmpl0.dtype)
+				combined_tmpl[:n0, :, :C] = tmpl0
+				combined_tmpl[id_offset:id_offset + n1, :, C:] = tmpl1
+			else:
+				combined_tmpl = data_raw.templates
+			np.save(os.path.join(config.savedir, 'templates.npy'), combined_tmpl)
+			print('Templates saved to: {}'.format(os.path.join(config.savedir, 'templates.npy')), file=f)
 
 		if plot:
 			if data_raw2 is not None:
@@ -757,8 +778,24 @@ if __name__ == '__main__':
 						if blinding_enabled:
 							neuron_assess = np.intersect1d(neuron_assess, processed_indices)
 						frac2 = len(neuron_assess)/nNeu
-						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu, 
+						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu,
 																  np.round(frac2*100, 2)), file=f)
+
+						# Apply minimum total AP count criterion: neuron must have > 25 spikes
+						# summed across ALL positions and trials in the analysis window.
+						print('\tCalculating counts for the window size', file=f)
+						data, _ = PatternToCount(pattern=pattern, timerange=list(config.windows[w]),
+												 timeBinSz=np.diff(config.windows[w])[0])
+						total_aps = data.sum(axis=tuple(range(1, data.ndim)))
+						min_ap = getattr(config, 'min_ap_count', 25)
+						ap_mask = total_aps > min_ap
+						n_before = len(neuron_assess)
+						neuron_assess = np.intersect1d(neuron_assess, np.where(ap_mask)[0])
+						print('\tAP threshold (>{} APs): {}/{} auditory neurons pass'.format(
+							min_ap, len(neuron_assess), n_before), file=f)
+						print('\tAP threshold (>{} APs): {}/{} auditory neurons pass'.format(
+							min_ap, len(neuron_assess), n_before))
+
 						if fit == 'kent':
 							param_labels = ['kappa', 'beta', 'theta', 'phi', 'alpha', 'height']
 
@@ -784,10 +821,6 @@ if __name__ == '__main__':
 								sumresid = np.zeros((nNeu,2))
 
 							print('\nFitting Kent distribution', file=f)
-
-							print('\tCalculating counts for the window size', file=f)
-							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
-												  timeBinSz=np.diff(config.windows[w])[0])
 
 							# Build argument list for fitting
 							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
