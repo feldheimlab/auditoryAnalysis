@@ -446,9 +446,9 @@ if __name__ == '__main__':
 
 		# Save probe map to results folder
 		np.save(os.path.join(config.savedir, 'probe_map.npy'), combined_chanposition)
-		combined_cluster.to_csv(os.path.join(config.savedir, 'cluster_info.csv'), index=False)
+		combined_cluster.to_csv(os.path.join(config.savedir, 'mapped_info.csv'), index=False)
 		print('Probe map saved to: {}'.format(os.path.join(config.savedir, 'probe_map.npy')), file=f)
-		print('Cluster info saved to: {}'.format(os.path.join(config.savedir, 'cluster_info.csv')), file=f)
+		print('Cluster info saved to: {}'.format(os.path.join(config.savedir, 'mapped_info.csv')), file=f)
 
 		# Save templates to results folder.
 		# For dual-recording, build a combined array: shape (id_offset+n1, T, 2*C)
@@ -772,8 +772,24 @@ if __name__ == '__main__':
 						if blinding_enabled:
 							neuron_assess = np.intersect1d(neuron_assess, processed_indices)
 						frac2 = len(neuron_assess)/nNeu
-						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu, 
+						print('\tFraction of auditory responsive neurons {0}/{1}: {2}%'.format(len(neuron_assess), nNeu,
 																  np.round(frac2*100, 2)), file=f)
+
+						# Apply minimum total AP count criterion: neuron must have > 25 spikes
+						# summed across ALL positions and trials in the analysis window.
+						print('\tCalculating counts for the window size', file=f)
+						data, _ = PatternToCount(pattern=pattern, timerange=list(config.windows[w]),
+												 timeBinSz=np.diff(config.windows[w])[0])
+						total_aps = data.sum(axis=tuple(range(1, data.ndim)))
+						min_ap = getattr(config, 'min_ap_count', 25)
+						ap_mask = total_aps > min_ap
+						n_before = len(neuron_assess)
+						neuron_assess = np.intersect1d(neuron_assess, np.where(ap_mask)[0])
+						print('\tAP threshold (>{} APs): {}/{} auditory neurons pass'.format(
+							min_ap, len(neuron_assess), n_before), file=f)
+						print('\tAP threshold (>{} APs): {}/{} auditory neurons pass'.format(
+							min_ap, len(neuron_assess), n_before))
+
 						if fit == 'kent':
 							param_labels = ['kappa', 'beta', 'theta', 'phi', 'alpha', 'height']
 
@@ -799,10 +815,6 @@ if __name__ == '__main__':
 								sumresid = np.zeros((nNeu,2))
 
 							print('\nFitting Kent distribution', file=f)
-
-							print('\tCalculating counts for the window size', file=f)
-							data, _ = PatternToCount(pattern=pattern,timerange=list(config.windows[w]), 
-												  timeBinSz=np.diff(config.windows[w])[0])
 
 							# Build argument list for fitting
 							fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
