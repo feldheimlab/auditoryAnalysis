@@ -764,9 +764,16 @@ if __name__ == '__main__':
 							plot_windowed_data = combined_data
 						else:
 							plot_windowed_data = data_raw
+						_cm = plot_windowed_data.cluster.copy()
 						for w_plot, win_plot in enumerate(config.windows):
-							plot_windowed_fr_on_probe(data_obj=plot_windowed_data, pattern=pattern,
-													  window=win_plot, save_image_dir=plot_img_dir,
+							ave_col = "avg window {0} - {1} ms".format(win_plot[0], win_plot[1])
+							if ave_col in activity_df.columns:
+								_cm[f"windowed_fr_win{w_plot}"] = float("nan")
+								for _idx, _cid in enumerate(combined_IDs):
+									_cm.loc[_cm["cluster_id"] == _cid, f"windowed_fr_win{w_plot}"] = activity_df[ave_col].iloc[_idx]
+							_cm.attrs[f"window_{w_plot}"] = list(win_plot)
+							plot_windowed_fr_on_probe(_cm, plot_windowed_data.chanposition,
+													  save_image_dir=plot_img_dir,
 													  window_index=w_plot)
 
 					#Fitting the data, only process select neurons

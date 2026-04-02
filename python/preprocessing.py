@@ -838,8 +838,13 @@ def sigAudFRCompareSpont(pattern, spont_win, windows, test='poisson', siglvl=0.0
     assert len(test)==len(siglvls), 'Significance levels and number of testing distributions not equal'
     
     sz = pattern.shape
+    print(sz)
     nNeu = sz[0]
-    nSeg = sz[1]*sz[2]*sz[3]
+    if len(sz) == 4:
+        nSeg = sz[1]*sz[2]*sz[3]
+    else:
+        nSeg = sz[1]*sz[2]
+
     nWin = windows.shape[0]
     
     columns = []
