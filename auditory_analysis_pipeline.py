@@ -18,7 +18,7 @@ import scipy.io as sio
 
 # custom functions
 from python.preprocessing import probeMap, probeMapFromMeta, readStimFile, getTTLseg, patternGen, PatternToCount, sigAudFRCompareSpont
-from python.distributions_fit import azimElevCoord, kent_fit, uniform_fit, aic_leastsquare, bic_leastsquare
+from python.distributions_fit import azimElevCoord, kent_fit, gaussian_fit_2d, uniform_fit, aic_leastsquare, bic_leastsquare
 from python.visualizations import plot_neurons_relative_to_probe, plot_overall_fr_on_probe, plot_windowed_fr_on_probe
 from python.random_chord_analysis import DoRandomChordAnalysis
 from config import configs
@@ -38,7 +38,7 @@ def _fit_neuron_kent(args_tuple):
 	Must be at module level to be picklable by multiprocessing.
 	"""
 	n, neuron_data, azim, elev, laser = args_tuple
-	from python.distributions_fit import azimElevCoord, kent_fit, uniform_fit, aic_leastsquare, bic_leastsquare
+	from python.distributions_fit import azimElevCoord, kent_fit, gaussian_fit_2d, uniform_fit, aic_leastsquare, bic_leastsquare
 
 	if laser is not None:
 		results = {}
@@ -88,7 +88,58 @@ def _fit_neuron_kent(args_tuple):
 		}
 
 
-def get_IDs(cluster: pd.DataFrame, 
+def _fit_neuron_gaussian(args_tuple):
+	"""Worker function for parallel 2-D Gaussian RF fitting.
+
+	Must be at module level to be picklable by multiprocessing.
+	"""
+	n, neuron_data, azim, elev, laser = args_tuple
+	from python.distributions_fit import gaussian_fit_2d, uniform_fit, aic_leastsquare, bic_leastsquare
+
+	if laser is not None:
+		results = {}
+		for l in laser:
+			if l == 0:
+				mean_data = np.mean(np.squeeze(neuron_data[:, :, 0]), axis=2)
+			else:
+				mean_data = np.mean(np.squeeze(neuron_data[:, :, 1]), axis=2)
+
+			aud = mean_data.ravel()
+			gaussfit = gaussian_fit_2d(aud, azim, elev, datashape=mean_data.shape, verbose=False)
+			uniformfit = uniform_fit(aud, np.arange(mean_data.size))
+
+			uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
+			gaic = aic_leastsquare(gaussfit.residuals, gaussfit.params)
+			ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
+			gbic = bic_leastsquare(gaussfit.residuals, gaussfit.params)
+
+			results[l] = {
+				'params': gaussfit.params, 'var': gaussfit.var,
+				'fitdist': gaussfit.fitdist, 'data': gaussfit.data,
+				'aic_bic': [uaic, gaic, ubic, gbic],
+				'sumresid': [uniformfit.residuals_sum, gaussfit.residual_sum],
+			}
+		return n, results
+	else:
+		mean_data = np.mean(np.squeeze(neuron_data), axis=2)
+		aud = mean_data.ravel()
+		gaussfit = gaussian_fit_2d(aud, azim, elev, datashape=mean_data.shape, verbose=False)
+		uniformfit = uniform_fit(aud, np.arange(mean_data.size))
+
+		uaic = aic_leastsquare(uniformfit.residuals, uniformfit.params)
+		gaic = aic_leastsquare(gaussfit.residuals, gaussfit.params)
+		ubic = bic_leastsquare(uniformfit.residuals, uniformfit.params)
+		gbic = bic_leastsquare(gaussfit.residuals, gaussfit.params)
+
+		return n, {
+			'params': gaussfit.params, 'var': gaussfit.var,
+			'fitdist': gaussfit.fitdist, 'data': gaussfit.data,
+			'aic_bic': [uaic, gaic, ubic, gbic],
+			'sumresid': [uniformfit.residuals_sum, gaussfit.residual_sum],
+		}
+
+
+def get_IDs(cluster: pd.DataFrame,
 			class_col: str, 
 			group: str = 'good'):
 	'''
@@ -909,8 +960,108 @@ if __name__ == '__main__':
 								'neuron_assess': neuron_assess,
 							}
 
+					elif fit == 'gaussian':
+						param_labels = ['height', 'mu_azim', 'mu_elev', 'sigma_azim', 'sigma_elev', 'base']
+
+						elev = 90 - np.array(num_stim[0]).astype(int)
+						azim = -1 * np.array(num_stim[1]).astype(int)
+						azim = azim * np.pi / 180
+						elev = elev * np.pi / 180
+						try:
+							laser = np.array(num_stim[2]).astype(int)
+							parameters = np.zeros([nNeu, 2, len(param_labels)])
+							variances  = np.zeros([nNeu, 2, len(param_labels)])
+							modelfits  = np.zeros([nNeu, 2, len(elev), len(azim)])
+							datafits   = modelfits.copy()
+							aic_bic    = np.zeros((nNeu, 2, 4))
+							sumresid   = np.zeros((nNeu, 2, 2))
+						except Exception:
+							laser = None
+							parameters = np.zeros([nNeu, len(param_labels)])
+							variances  = np.zeros([nNeu, len(param_labels)])
+							modelfits  = np.zeros([nNeu, len(elev), len(azim)])
+							datafits   = modelfits.copy()
+							aic_bic    = np.zeros((nNeu, 4))
+							sumresid   = np.zeros((nNeu, 2))
+
+						print('\nFitting 2-D Gaussian distribution', file=f)
+
+						fit_args = [(n, data[n], azim, elev, laser) for n in neuron_assess]
+						n_total = len(neuron_assess)
+						print_interval = max(1, n_total // 10)
+
+						use_parallel = args.get('parallel', False)
+						if use_parallel:
+							n_workers = min(cpu_count() - 1 or 1, n_total)
+							results_list = []
+							with Pool(n_workers) as pool:
+								for i, result in enumerate(pool.imap_unordered(_fit_neuron_gaussian, fit_args), 1):
+									results_list.append(result)
+									if i % print_interval == 0 or i == n_total:
+										print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+											i, n_total, 100 * i / n_total), flush=True)
+						else:
+							print('Fitting {} neurons serially'.format(n_total), file=f)
+							results_list = []
+							for i, args_tuple in enumerate(fit_args, 1):
+								results_list.append(_fit_neuron_gaussian(args_tuple))
+								if i % print_interval == 0 or i == n_total:
+									print('  Fitting progress: {}/{} neurons ({:.0f}%)'.format(
+										i, n_total, 100 * i / n_total), flush=True)
+
+						for n, res in results_list:
+							if laser is not None:
+								for l in laser:
+									parameters[n, l] = res[l]['params']
+									variances[n, l]  = res[l]['var']
+									modelfits[n, l]  = res[l]['fitdist']
+									datafits[n, l]   = res[l]['data']
+									aic_bic[n, l]    = res[l]['aic_bic']
+									sumresid[n, l]   = res[l]['sumresid']
+							else:
+								parameters[n] = res['params']
+								variances[n]  = res['var']
+								modelfits[n]  = res['fitdist']
+								datafits[n]   = res['data']
+								aic_bic[n]    = res['aic_bic']
+								sumresid[n]   = res['sumresid']
+
+						print('Fitting complete for {} neurons'.format(len(neuron_assess)), file=f)
+						winsavedir = os.path.join(seqsavedir, '{0} fit win {1}/'.format(fit, w))
+						if not os.path.exists(winsavedir):
+							os.mkdir(winsavedir)
+						np.save(os.path.join(winsavedir, 'neuron_assess.npy'), neuron_assess)
+						np.save(os.path.join(winsavedir, 'parameters.npy'), parameters)
+						np.save(os.path.join(winsavedir, 'variances.npy'), variances)
+						np.save(os.path.join(winsavedir, 'modelfits.npy'), modelfits)
+						np.save(os.path.join(winsavedir, 'datafits.npy'), datafits)
+						np.save(os.path.join(winsavedir, 'aic_bic.npy'), aic_bic)
+						np.save(os.path.join(winsavedir, 'sumresid.npy'), sumresid)
+
+						print('Gaussian distribution data saved to :', winsavedir, file=f)
+
+						bic_uniform = aic_bic[:, 2] if aic_bic.ndim == 2 else aic_bic[:, 0, 2]
+						bic_gauss   = aic_bic[:, 3] if aic_bic.ndim == 2 else aic_bic[:, 0, 3]
+						delta_bic   = bic_uniform - bic_gauss
+						is_rf       = delta_bic > 0
+						rf_indices  = np.where(is_rf)[0]
+						np.save(os.path.join(winsavedir, 'is_rf.npy'), is_rf)
+						np.save(os.path.join(winsavedir, 'rf_indices.npy'), rf_indices)
+
+						if blinding_enabled:
+							print(f'  Window {w}: {is_rf.sum()} / {blinding_data["n_processed"]} RF blinded neurons', file=f)
+						else:
+							print(f'  Window {w}: {is_rf.sum()} / {len(is_rf)} RF neurons', file=f)
+						win_params = parameters if parameters.ndim == 2 else parameters[:, 0, :]
+						window_summaries[w] = {
+							'is_rf': is_rf,
+							'delta_bic': delta_bic,
+							'parameters': win_params,
+							'neuron_assess': neuron_assess,
+						}
+
 					# Build and save cluster_map.csv with RF designations and preferred positions
-					if fit == 'kent' and window_summaries:
+					if fit in ('kent', 'gaussian') and window_summaries:
 						cluster_map_df = pd.DataFrame({'cluster_id': combined_IDs})
 						if data_raw2 is not None:
 							cluster_map_df['dataset'] = np.concatenate([
@@ -922,8 +1073,12 @@ if __name__ == '__main__':
 							ws = window_summaries[w]
 							cluster_map_df[f'is_auditory_win{w}'] = aud_qpoisson[:, w].astype(bool)
 							cluster_map_df[f'is_rf_win{w}'] = ws['is_rf']
-							pref_az = np.degrees(ws['parameters'][:, 3]).copy()
-							pref_el = (90 - np.degrees(ws['parameters'][:, 2])).copy()
+							if fit == 'kent':
+								pref_az = np.degrees(ws['parameters'][:, 3]).copy()
+								pref_el = (90 - np.degrees(ws['parameters'][:, 2])).copy()
+							else:  # gaussian
+								pref_az = ws['parameters'][:, 1].copy()
+								pref_el = ws['parameters'][:, 2].copy()
 							fitted_mask = np.zeros(nNeu, dtype=bool)
 							fitted_mask[ws['neuron_assess']] = True
 							pref_az[~fitted_mask] = np.nan

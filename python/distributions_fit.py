@@ -220,28 +220,42 @@ class gaussian_fit():
         ----------
         params : np.ndarray
             Fitted parameters [height, mean, std, base].
+        var : np.ndarray
+            Parameter standard errors estimated from the Jacobian.
         fitresult : np.ndarray
             Model predictions at the input positions.
+        residuals : np.ndarray
+            Difference between observed data and model fit.
         '''
         self.data = data
         self.X = X
         self.init_params = init_params
-        self.verbose=verbose
-        self.plot=plot
-        
+        self.verbose = verbose
+        self.plot = plot
+
         if not isinstance(X, np.ndarray):
             if not isinstance(X, list):
                 self.X = np.indices(self.data.shape)
-        if self.init_params == None:
+        if self.init_params is None:
             self.init_params = self.gaussian_moments()
-        print(self.init_params)
-        
+
         error_function = lambda p: np.ravel(self.gaussian(p, self.X) - self.data)
-        self.params, self.success = optimize.leastsq(error_function, self.init_params)
+        results = optimize.least_squares(error_function, self.init_params)
+        self.params = results.x
+        self.success = results.success
         self.fitresult = self.gaussian(self.params, self.X)
+        self.residuals = self.data - self.fitresult
+
+        resid_var = np.sum(results.fun ** 2) / max(results.fun.shape[0] - len(self.params), 1)
+        try:
+            cov = np.linalg.inv(results.jac.T.dot(results.jac))
+            self.var = np.sqrt(np.diagonal(cov) * resid_var)
+        except Exception:
+            self.var = np.full(len(self.params), np.nan)
+
         try:
             self.chiresults = chiSquaredTest(self.data, self.fitresult, self.params, plot=self.plot)
-        except:
+        except Exception:
             self.chiresults = None
             
     def gaussian_moments(self):
@@ -740,6 +754,174 @@ class kent_fit():
         height = np.random.uniform(low=0, high=100, size=1)
 
         return np.squeeze(np.array([kappa, beta, theta, phi, alpha, height]))
+
+
+class gaussian_fit_2d():
+    def __init__(self, data, azim, elev, datashape, n_iter=50, init_params=None, verbose=True, plot=False):
+        '''Fit a 2-D Gaussian with uniform background to a azimuth × elevation
+        receptive-field map using least-squares with random restarts.
+
+        Parameters
+        ----------
+        data : np.ndarray, shape (N_elev * N_azim,)
+            Observed firing-rate values in row-major (elevation-major) order.
+        azim : np.ndarray, shape (N_azim,)
+            Azimuth values in radians.
+        elev : np.ndarray, shape (N_elev,)
+            Elevation values in radians.
+        datashape : tuple
+            Original 2-D shape (N_elev, N_azim) for reshaping results.
+        n_iter : int, optional
+            Number of random restarts. Default is 50.
+        init_params : unused
+            Reserved for future use.
+        verbose : bool, optional
+            If True, print iteration progress. Default is True.
+        plot : bool, optional
+            If True, generate diagnostic plots. Default is False.
+
+        Attributes
+        ----------
+        params : np.ndarray
+            Best-fit parameters [height, mu_azim, mu_elev, sigma_azim, sigma_elev, base].
+        var : np.ndarray
+            Parameter standard errors from the best iteration.
+        fitdist : np.ndarray
+            Model predictions reshaped to datashape.
+        data : np.ndarray
+            Input data reshaped to datashape.
+        residuals : np.ndarray
+            Residuals from the best iteration (flat).
+        residual_sum : float
+            Sum of absolute residuals from the best iteration.
+        param_labels : list of str
+            Names of the fitted parameters.
+        '''
+        self.data      = data
+        self.datashape = datashape
+        self.verbose   = verbose
+        self.plot      = plot
+        self.param_labels = ['height', 'mu_azim', 'mu_elev', 'sigma_azim', 'sigma_elev', 'base']
+        self.n_iter    = n_iter
+
+        # Build flat coordinate arrays from the meshgrid
+        azim_grid, elev_grid = np.meshgrid(azim, elev)
+        self._azim_flat = azim_grid.ravel()
+        self._elev_flat = elev_grid.ravel()
+
+        # Bounds: [height, mu_azim, mu_elev, sigma_azim, sigma_elev, base]
+        dmax = float(np.nanmax(np.abs(data))) if data.size > 0 else 1.0
+        self.limits = (
+            (0,      azim.min() - 0.5, elev.min() - 0.5, 0.01, 0.01, -dmax),
+            (dmax*2, azim.max() + 0.5, elev.max() + 0.5, np.pi, np.pi, dmax),
+        )
+        self._azim_range = (float(azim.min()), float(azim.max()))
+        self._elev_range = (float(elev.min()), float(elev.max()))
+        self._data_max   = dmax
+
+        iterations = namedtuple('iterations', 'init_params var residuals params success residual_sum')
+        if self.verbose:
+            print('Iterating through {} different parameter start points'.format(self.n_iter))
+
+        for n in np.arange(n_iter):
+            if self.verbose and (n % 10) == 0:
+                print('\tWorking on {0} of {1} iterations'.format(n, self.n_iter))
+            param = self._rand_start()
+            error_fn = lambda p: np.ravel(self._gaussian_2d(p) - data)
+            results = optimize.least_squares(error_fn, param, bounds=self.limits)
+
+            if n == 0:
+                init_params_arr = np.full((n_iter, len(self.param_labels)), np.nan)
+                var_arr         = np.full((n_iter, len(self.param_labels)), np.nan)
+                residuals_arr   = np.full((n_iter, len(self._azim_flat)), np.nan)
+                params_arr      = np.full((n_iter, len(self.param_labels)), np.nan)
+                success_arr     = np.full(n_iter, np.nan)
+                residual_sum    = np.full(n_iter, np.nan)
+
+            init_params_arr[n] = param
+            success_arr[n]     = results.success
+
+            if results.success:
+                params_arr[n]    = results.x
+                residuals_arr[n] = results.fun
+                residual_sum[n]  = np.sum(np.abs(results.fun))
+                resid_var = np.sum(results.fun**2) / max(results.fun.shape[0] - len(self.param_labels), 1)
+                try:
+                    cov = np.linalg.inv(results.jac.T.dot(results.jac))
+                    var_arr[n] = np.sqrt(np.diagonal(cov) * resid_var)
+                except Exception as e:
+                    if self.verbose:
+                        print('\t\t', e)
+
+        self.iterations = iterations(init_params_arr, var_arr, residuals_arr, params_arr, success_arr, residual_sum)
+
+        index            = np.nanargmin(residual_sum)
+        self.params      = params_arr[index]
+        self.var         = var_arr[index]
+        self.residuals   = residuals_arr[index]
+        self.residual_sum = float(residual_sum[index])
+        self.fitdist     = self._gaussian_2d(self.params).reshape(datashape)
+        self.data        = data.reshape(datashape)
+        self.chiresults  = chiSquaredTest(
+            data, self._gaussian_2d(self.params), self.params)
+
+    def _gaussian_2d(self, params):
+        '''Evaluate the 2-D Gaussian at all grid points.
+
+        Parameters
+        ----------
+        params : array-like
+            [height, mu_azim, mu_elev, sigma_azim, sigma_elev, base]
+
+        Returns
+        -------
+        np.ndarray
+            Flat array of predicted firing rates.
+        '''
+        height, mu_az, mu_el, sig_az, sig_el, base = params
+        return (height * np.exp(-0.5 * (
+            (self._azim_flat - mu_az) ** 2 / sig_az ** 2 +
+            (self._elev_flat - mu_el) ** 2 / sig_el ** 2
+        )) + base)
+
+    def _rand_start(self):
+        '''Generate random starting parameters within bounds.
+
+        Returns
+        -------
+        np.ndarray
+            Array of 6 parameters [height, mu_azim, mu_elev, sigma_azim, sigma_elev, base].
+        '''
+        height    = np.random.uniform(0.1, max(self._data_max, 0.1))
+        mu_az     = np.random.uniform(*self._azim_range)
+        mu_el     = np.random.uniform(*self._elev_range)
+        sig_az    = np.random.uniform(0.1, (self._azim_range[1] - self._azim_range[0]) / 2 + 0.1)
+        sig_el    = np.random.uniform(0.1, (self._elev_range[1] - self._elev_range[0]) / 2 + 0.1)
+        base      = np.random.uniform(0, max(self._data_max * 0.5, 0.1))
+        return np.array([height, mu_az, mu_el, sig_az, sig_el, base])
+
+    def predict(self, azim_new, elev_new):
+        '''Predict firing rates on a new azimuth × elevation grid.
+
+        Parameters
+        ----------
+        azim_new : np.ndarray, shape (N_azim,)
+            New azimuth values in radians.
+        elev_new : np.ndarray, shape (N_elev,)
+            New elevation values in radians.
+
+        Returns
+        -------
+        np.ndarray, shape (N_elev, N_azim)
+            Predicted firing rates.
+        '''
+        az_g, el_g = np.meshgrid(azim_new, elev_new)
+        old_az, old_el = self._azim_flat.copy(), self._elev_flat.copy()
+        self._azim_flat = az_g.ravel()
+        self._elev_flat = el_g.ravel()
+        out = self._gaussian_2d(self.params).reshape(len(elev_new), len(azim_new))
+        self._azim_flat, self._elev_flat = old_az, old_el
+        return out
 
 
 def aic_leastsquare(residuals, params):
